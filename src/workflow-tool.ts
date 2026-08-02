@@ -23,96 +23,108 @@ import { loadWorkflowSettings } from "./workflow-settings.js";
 export const WORKFLOW_GATE_GUIDELINE =
   "The `workflow` tool runs multi-agent orchestration — it fans decomposable work out across subagents, and fits tasks shaped like: repo-wide inspection, independent parallel research/checks, multi-perspective review, or fan-out/fan-in synthesis. ONLY call it when the user explicitly opts in — via the workflow trigger word, `/workflows run`, or their own words (e.g. 'run a workflow', 'fan this out', '并行审一遍'). For any other task — even one that would clearly benefit — do not call it; you may briefly offer it (with a rough cost) as an option instead.";
 
-const workflowToolSchema = Type.Object({
-  script: Type.Optional(
-    Type.String({
-      description: [
-        "Raw JavaScript workflow script, with no Markdown fences. Required unless `name` is given.",
-        "First statement: export const meta = { name: 'short_snake_case', description: 'non-empty description' }. Add phases: [{ title: 'Phase' }] only when the workflow has named phases, and declare only phases it will use. With multiple phases, call phase('Exact Title') before each phase's work or set `phase` in the agent options.",
-        "Use `await workflow(savedName, childArgs)` to run a saved workflow inline; nesting is limited to one level and shares the parent run's concurrency, agent, and token limits.",
-        "Optional quality helpers include verify(), judgePanel(), loopUntilDry(), and completenessCheck().",
-        "Optional control helpers include retry() and gate(); budget exposes total, spent(), and remaining(), and phase('Name', { budget: N }) sets a phase token limit.",
-        "The optional `agentType` option selects a named user or project definition that can bind tools, a model, and role instructions; use it only when its name and purpose are provided in context. Its bound model overrides `tier`; an explicit `model` overrides both.",
-        "Use plain JavaScript only; imports, require(), filesystem modules, Date.now(), Math.random(), and new Date() are unavailable.",
-        "Use phase('Name'), agent(prompt, opts), parallel(arrayOfFunctions), pipeline(items, ...stages), log(message), args, cwd, process.cwd(), and budget. The workflow must call agent() at least once.",
-        "parallel() requires functions, not promises, and returns results in input order: await parallel(items.map(item => () => agent(...))).",
-        "pipeline(items, ...stages) runs stages sequentially for each item while items proceed concurrently; each stage receives (previousValue, originalItem, index).",
-      ].join(" "),
-    }),
-  ),
-  name: Type.Optional(
-    Type.String({
-      description:
-        "Run a saved or built-in workflow by name instead of `script`; its args go in `args`. " +
-        `Built-ins: ${BUILTIN_WORKFLOW_NAMES.join(", ")} — see the workflow-patterns skill for each one's args. ` +
-        "A same-named saved workflow wins. Not combinable with resumeFromRunId.",
-    }),
-  ),
-  args: Type.Optional(
-    // Must be an explicitly typed object schema, not Type.Any(). Type.Any()
-    // compiles to a schema with no "type" keyword at all (just
-    // `{ description }`), and at least one MCP/tool-calling bridge observed
-    // in the wild does not treat a typeless property as "accept any JSON
-    // value" — it coerces/flattens it before the handler ever sees it, so
-    // `args.scope` (etc.) arrives as `undefined` and every built-in pattern
-    // that requires an args field fails validation regardless of what the
-    // caller actually sent. Every built-in pattern's `args` is a JSON object
-    // at the top level, so declaring `type: "object"` is lossless and fixes
-    // the coercion. Type.Unsafe keeps the emitted schema minimal (no
-    // `properties`/`additionalProperties` boilerplate — JSON Schema already
-    // allows additional properties by default) to stay inside the
-    // provider-visible tool definition's byte budget.
-    Type.Unsafe<Record<string, unknown>>({
-      type: "object",
-      description: "Optional JSON value exposed to the workflow script as global `args`.",
-    }),
-  ),
-  background: Type.Optional(
-    Type.Boolean({
-      description:
-        "Run the workflow in the background. Default: true — the tool returns immediately with a run ID, the turn ends so the user isn't blocked, and the result is delivered back into the conversation when it finishes. Set to false only when you need the result inline in this same turn (the call will block until the workflow completes).",
-    }),
-  ),
-  maxAgents: Type.Optional(
-    Type.Number({
-      description:
-        "Maximum number of agents allowed in this run. Default: 1000; this is a safety ceiling, not a target. Set a lower limit for dynamic or exploratory fan-out, and reserve large fan-outs for explicit user intent.",
-    }),
-  ),
-  concurrency: Type.Optional(
-    Type.Number({
-      description:
-        "Maximum concurrent agents for this run. Clamped to the runtime maximum. Use when provider/transport stability matters.",
-    }),
-  ),
-  agentRetries: Type.Optional(
-    Type.Number({
-      description:
-        "Retry attempts for recoverable agent failures such as timeout, connection failure, or empty assistant output. Default 0 unless configured.",
-    }),
-  ),
-  agentTimeoutMs: Type.Optional(
-    Type.Number({
-      description:
-        "Timeout per agent in milliseconds. Omit to use configured `defaultAgentTimeoutMs`; without one, there is no hard timeout. Set only when the user asks to bound time.",
-    }),
-  ),
-  tokenBudget: Type.Optional(
-    Type.Number({
-      description:
-        "Optional user-requested soft spend gate, not a planning target. Do not set `tokenBudget` unless the user explicitly supplies a cap or asks you to choose one; never infer or invent one from task size. If omitted, the configured `defaultTokenBudget` applies; without one, the run is unlimited. Reaching the gate blocks later `agent()` calls; concurrent in-flight work can overshoot.",
-    }),
-  ),
-  resumeFromRunId: Type.Optional(
-    Type.String({
-      description: [
-        "Resume a prior run (this ID) with an edited `script` instead of starting a new run.",
-        "Unchanged agent() calls replay from that run's cache; the first changed/new call onward re-runs.",
-        "Calls match by position: keep earlier good calls identical and in order. Always background.",
-      ].join(" "),
-    }),
-  ),
-});
+// Built lazily: `Type` is backed by the TypeBox shim injected on ExtensionAPI,
+// which does not exist until the extension factory has installed the host
+// runtime. Memoized so the tool definition and its type stay identity-stable.
+function buildWorkflowToolSchema() {
+  return Type.Object({
+    script: Type.Optional(
+      Type.String({
+        description: [
+          "Raw JavaScript workflow script, with no Markdown fences. Required unless `name` is given.",
+          "First statement: export const meta = { name: 'short_snake_case', description: 'non-empty description' }. Add phases: [{ title: 'Phase' }] only when the workflow has named phases, and declare only phases it will use. With multiple phases, call phase('Exact Title') before each phase's work or set `phase` in the agent options.",
+          "Use `await workflow(savedName, childArgs)` to run a saved workflow inline; nesting is limited to one level and shares the parent run's concurrency, agent, and token limits.",
+          "Optional quality helpers include verify(), judgePanel(), loopUntilDry(), and completenessCheck().",
+          "Optional control helpers include retry() and gate(); budget exposes total, spent(), and remaining(), and phase('Name', { budget: N }) sets a phase token limit.",
+          "The optional `agentType` option selects a named user or project definition that can bind tools, a model, and role instructions; use it only when its name and purpose are provided in context. Its bound model overrides `tier`; an explicit `model` overrides both.",
+          "Use plain JavaScript only; imports, require(), filesystem modules, Date.now(), Math.random(), and new Date() are unavailable.",
+          "Use phase('Name'), agent(prompt, opts), parallel(arrayOfFunctions), pipeline(items, ...stages), log(message), args, cwd, process.cwd(), and budget. The workflow must call agent() at least once.",
+          "parallel() requires functions, not promises, and returns results in input order: await parallel(items.map(item => () => agent(...))).",
+          "pipeline(items, ...stages) runs stages sequentially for each item while items proceed concurrently; each stage receives (previousValue, originalItem, index).",
+        ].join(" "),
+      }),
+    ),
+    name: Type.Optional(
+      Type.String({
+        description:
+          "Run a saved or built-in workflow by name instead of `script`; its args go in `args`. " +
+          `Built-ins: ${BUILTIN_WORKFLOW_NAMES.join(", ")} — see the workflow-patterns skill for each one's args. ` +
+          "A same-named saved workflow wins. Not combinable with resumeFromRunId.",
+      }),
+    ),
+    args: Type.Optional(
+      // Must be an explicitly typed object schema, not Type.Any(). Type.Any()
+      // compiles to a schema with no "type" keyword at all (just
+      // `{ description }`), and at least one MCP/tool-calling bridge observed
+      // in the wild does not treat a typeless property as "accept any JSON
+      // value" — it coerces/flattens it before the handler ever sees it, so
+      // `args.scope` (etc.) arrives as `undefined` and every built-in pattern
+      // that requires an args field fails validation regardless of what the
+      // caller actually sent. Every built-in pattern's `args` is a JSON object
+      // at the top level, so declaring `type: "object"` is lossless and fixes
+      // the coercion. Type.Unsafe keeps the emitted schema minimal (no
+      // `properties`/`additionalProperties` boilerplate — JSON Schema already
+      // allows additional properties by default) to stay inside the
+      // provider-visible tool definition's byte budget.
+      Type.Unsafe<Record<string, unknown>>({
+        type: "object",
+        description: "Optional JSON value exposed to the workflow script as global `args`.",
+      }),
+    ),
+    background: Type.Optional(
+      Type.Boolean({
+        description:
+          "Run the workflow in the background. Default: true — the tool returns immediately with a run ID, the turn ends so the user isn't blocked, and the result is delivered back into the conversation when it finishes. Set to false only when you need the result inline in this same turn (the call will block until the workflow completes).",
+      }),
+    ),
+    maxAgents: Type.Optional(
+      Type.Number({
+        description:
+          "Maximum number of agents allowed in this run. Default: 1000; this is a safety ceiling, not a target. Set a lower limit for dynamic or exploratory fan-out, and reserve large fan-outs for explicit user intent.",
+      }),
+    ),
+    concurrency: Type.Optional(
+      Type.Number({
+        description:
+          "Maximum concurrent agents for this run. Clamped to the runtime maximum. Use when provider/transport stability matters.",
+      }),
+    ),
+    agentRetries: Type.Optional(
+      Type.Number({
+        description:
+          "Retry attempts for recoverable agent failures such as timeout, connection failure, or empty assistant output. Default 0 unless configured.",
+      }),
+    ),
+    agentTimeoutMs: Type.Optional(
+      Type.Number({
+        description:
+          "Timeout per agent in milliseconds. Omit to use configured `defaultAgentTimeoutMs`; without one, there is no hard timeout. Set only when the user asks to bound time.",
+      }),
+    ),
+    tokenBudget: Type.Optional(
+      Type.Number({
+        description:
+          "Optional user-requested soft spend gate, not a planning target. Do not set `tokenBudget` unless the user explicitly supplies a cap or asks you to choose one; never infer or invent one from task size. If omitted, the configured `defaultTokenBudget` applies; without one, the run is unlimited. Reaching the gate blocks later `agent()` calls; concurrent in-flight work can overshoot.",
+      }),
+    ),
+    resumeFromRunId: Type.Optional(
+      Type.String({
+        description: [
+          "Resume a prior run (this ID) with an edited `script` instead of starting a new run.",
+          "Unchanged agent() calls replay from that run's cache; the first changed/new call onward re-runs.",
+          "Calls match by position: keep earlier good calls identical and in order. Always background.",
+        ].join(" "),
+      }),
+    ),
+  });
+}
+
+type WorkflowToolSchema = ReturnType<typeof buildWorkflowToolSchema>;
+let workflowToolSchemaCache: WorkflowToolSchema | undefined;
+
+function workflowToolSchema(): WorkflowToolSchema {
+  return (workflowToolSchemaCache ??= buildWorkflowToolSchema());
+}
 
 export type WorkflowToolInput = {
   script?: string;
@@ -142,7 +154,7 @@ export interface WorkflowToolOptions {
   defaultAgentRetries?: number;
 }
 
-export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefinition<typeof workflowToolSchema, any> {
+export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefinition<WorkflowToolSchema, any> {
   const storage = options.storage ?? createWorkflowStorage(options.cwd ?? process.cwd());
   const cwd = options.cwd ?? process.cwd();
   const defaults = resolveWorkflowToolDefaults(options, cwd);
@@ -166,7 +178,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
     get promptGuidelines() {
       return [WORKFLOW_GATE_GUIDELINE];
     },
-    parameters: workflowToolSchema,
+    parameters: workflowToolSchema(),
     prepareArguments(args) {
       return normalizeWorkflowToolArgs(args);
     },

@@ -12,29 +12,42 @@ import type { WorkflowManager } from "./workflow-manager.js";
 // the schema level. The per-action requirement (runId is mandatory for every
 // action except `list`, and `list` takes no runId) is enforced at runtime in
 // normalizeInput() and guarded again in execute().
-const workflowControlSchema = Type.Object(
-  {
-    action: Type.Union(
-      [
-        Type.Literal("list"),
-        Type.Literal("status"),
-        Type.Literal("pause"),
-        Type.Literal("resume"),
-        Type.Literal("stop"),
-      ],
-      { description: "list = all runs (no runId); status/pause/resume/stop act on one run and require runId." },
-    ),
-    runId: Type.Optional(
-      Type.String({
-        minLength: 1,
-        description: "Canonical workflow run ID. Required for status, pause, resume, and stop; omit for list.",
-      }),
-    ),
-  },
-  { additionalProperties: false },
-);
+//
+// Built lazily: `Type` is backed by the TypeBox shim injected on ExtensionAPI,
+// which does not exist until the extension factory has installed the host
+// runtime. Memoized so the tool definition and its type stay identity-stable.
+function buildWorkflowControlSchema() {
+  return Type.Object(
+    {
+      action: Type.Union(
+        [
+          Type.Literal("list"),
+          Type.Literal("status"),
+          Type.Literal("pause"),
+          Type.Literal("resume"),
+          Type.Literal("stop"),
+        ],
+        { description: "list = all runs (no runId); status/pause/resume/stop act on one run and require runId." },
+      ),
+      runId: Type.Optional(
+        Type.String({
+          minLength: 1,
+          description: "Canonical workflow run ID. Required for status, pause, resume, and stop; omit for list.",
+        }),
+      ),
+    },
+    { additionalProperties: false },
+  );
+}
 
-export type WorkflowControlInput = Static<typeof workflowControlSchema>;
+type WorkflowControlSchema = ReturnType<typeof buildWorkflowControlSchema>;
+let workflowControlSchemaCache: WorkflowControlSchema | undefined;
+
+function workflowControlSchema(): WorkflowControlSchema {
+  return (workflowControlSchemaCache ??= buildWorkflowControlSchema());
+}
+
+export type WorkflowControlInput = Static<WorkflowControlSchema>;
 
 export interface WorkflowControlToolOptions {
   manager: WorkflowManager;
@@ -64,7 +77,7 @@ type ControlResult = {
 
 export function createWorkflowControlTool(
   options: WorkflowControlToolOptions,
-): ToolDefinition<typeof workflowControlSchema, Record<string, unknown>> {
+): ToolDefinition<WorkflowControlSchema, Record<string, unknown>> {
   const manager = options.manager;
   return defineTool({
     name: "workflow_control",
@@ -76,7 +89,7 @@ export function createWorkflowControlTool(
       "Use workflow_control for workflow lifecycle management; do not ask the user to type /workflows when this tool can perform the action.",
       "Use stop to terminate or quit a run. Closing the navigator does not stop a run.",
     ],
-    parameters: workflowControlSchema,
+    parameters: workflowControlSchema(),
     prepareArguments: normalizeInput,
     async execute(_toolCallId, params) {
       if (params.action === "list") {

@@ -9,7 +9,8 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { getAgentDir, parseFrontmatter } from "./omp-api.js";
+import { host } from "./omp-host.js";
+import { parseFrontmatter } from "./omp-lazy.js";
 import { AGENTS_DIR } from "./config.js";
 
 export interface AgentDefinition {
@@ -112,13 +113,16 @@ function readDefsFromDir(dir: string, source: "project" | "user"): AgentDefiniti
  * definitions; filename order makes collisions within one directory stable.
  *
  * `opts` overrides the scanned directories for embedders and tests.
+ *
+ * Synchronous, so callers must `await warmFrontmatter()` first — `runWorkflow`
+ * does this on the only path that reaches here.
  */
 export function loadAgentRegistry(
   cwd: string,
   opts?: { projectDir?: string; userDir?: string },
 ): AgentRegistry {
   const projectDir = opts?.projectDir ?? join(cwd, AGENTS_DIR);
-  const userDir = opts?.userDir ?? join(getAgentDir(), "agents");
+  const userDir = opts?.userDir ?? join(host().getAgentDir(), "agents");
 
   const registry: AgentRegistry = new Map();
   for (const def of readDefsFromDir(projectDir, "project")) {

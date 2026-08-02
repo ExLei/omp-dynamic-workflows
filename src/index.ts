@@ -9,6 +9,15 @@ export { applyToolPolicy, listAgentTypes, loadAgentRegistry, resolveAgentType } 
 export { registerBuiltinWorkflows } from "./builtin-commands.js";
 export { generateCodeReviewWorkflow, MAX_DIFF_CHARS } from "./code-review.js";
 export * from "./config.js";
+export type { HostNamespace, HostTypeBox } from "./omp-host.js";
+export { host, hostTypeBox, installHostRuntime, isHostRuntimeInstalled } from "./omp-host.js";
+export {
+  isJsonSchemaValueValid,
+  parseConfiguredThinkingLevel,
+  parseFrontmatter,
+  warmFrontmatter,
+  warmSchemaValidator,
+} from "./omp-lazy.js";
 export type { DeepResearchConfig } from "./deep-research.js";
 export { generateCodebaseAuditWorkflow, generateDeepResearchWorkflow } from "./deep-research.js";
 export type {

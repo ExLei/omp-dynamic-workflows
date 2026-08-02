@@ -1,6 +1,9 @@
-export * from "@oh-my-pi/pi-coding-agent";
-export { parseFrontmatter } from "@oh-my-pi/pi-utils/frontmatter";
-export { parseConfiguredThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
+/**
+ * Types come from the real package (erased at compile time — a `type`-only
+ * import costs nothing at runtime). Runtime values must NOT be imported here:
+ * see src/omp-host.ts for why, and use `host()` / `hostTypeBox()` instead.
+ */
+export type * from "@oh-my-pi/pi-coding-agent";
 
 import type { ToolDefinition as NativeToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import type { Static as NativeStatic, TSchema } from "@oh-my-pi/pi-ai";

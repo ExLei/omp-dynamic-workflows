@@ -4,16 +4,14 @@ import { join } from "node:path";
 import type { AssistantMessage, Model, TextContent } from "@oh-my-pi/pi-ai";
 import {
   type CreateAgentSessionOptions,
-  createAgentSession,
-  discoverAuthStorage,
-  getAgentDir,
-  ModelRegistry,
+  type ModelRegistry,
   OMP_CODING_TOOL_NAMES,
-  parseConfiguredThinkingLevel,
-  SessionManager,
-  Settings,
+  type SessionManager,
+  type Settings,
   type ToolDefinition,
 } from "./omp-api.js";
+import { host } from "./omp-host.js";
+import { parseConfiguredThinkingLevel, warmSchemaValidator } from "./omp-lazy.js";
 import type { Static, TSchema } from "./omp-typebox.js";
 import { Check, Convert } from "./omp-typebox.js";
 import { type AgentHistoryEntry, compactAgentHistory } from "./agent-history.js";
@@ -145,6 +143,9 @@ export async function resolveStructuredOutput<T>(
   }
   if (capture.called) return capture.value as T;
 
+  // extractValidated()'s Check() falls back to the host JSON-Schema validator for
+  // schemas without safeParse; load it here, on the only path that can reach it.
+  await warmSchemaValidator();
   const extracted = extractValidated<T>(lastText(session.messages), schema);
   if (extracted !== undefined) {
     console.warn(
@@ -248,6 +249,7 @@ let fallbackRegistry: ModelRegistry | undefined;
 
 function ensureFallbackRegistry(): Promise<ModelRegistry> {
   if (!fallbackRegistryPromise) {
+    const { discoverAuthStorage, getAgentDir, ModelRegistry } = host();
     fallbackRegistryPromise = discoverAuthStorage(getAgentDir())
       .then((authStorage) => {
         const registry = new ModelRegistry(authStorage);
@@ -598,7 +600,7 @@ export class WorkflowAgent {
    * recursive workflow tool can leak into subagents.
    */
   private getSharedSettings(agentDir: string): Promise<Settings> {
-    this.sharedSettingsPromise ??= Settings.loadIsolated({
+    this.sharedSettingsPromise ??= host().Settings.loadIsolated({
       cwd: this.cwd,
       agentDir,
     }).catch((error) => {
@@ -673,6 +675,7 @@ export class WorkflowAgent {
    * persisted transcript.
    */
   private createSessionManager(): SessionManager {
+    const { SessionManager } = host();
     if (!this.persistAgentSessions) return SessionManager.inMemory();
     try {
       const manager = SessionManager.create(this.cwd);
@@ -792,12 +795,12 @@ export class WorkflowAgent {
         }
       } else {
         resolvedModel = resolved.model;
-        resolvedThinkingLevel = parseConfiguredThinkingLevel(resolved.thinkingLevel);
+        resolvedThinkingLevel = await parseConfiguredThinkingLevel(resolved.thinkingLevel);
         options.onModelResolved?.(resolved.resolvedSpec ?? canonicalModelSpec(resolved.model));
       }
     }
 
-    const agentDir = getAgentDir();
+    const agentDir = host().getAgentDir();
     // Key persisted sessions by the runner's project cwd (this.cwd), not a
     // short-lived per-call worktree.
     const sessionManager = this.createSessionManager();
@@ -808,7 +811,7 @@ export class WorkflowAgent {
       ...nativeToolNames,
       ...allCustomTools.map((tool) => tool.name),
     ].filter((name, index, names) => !deniedTools.has(name) && names.indexOf(name) === index);
-    const { session } = await createAgentSession({
+    const { session } = await host().createAgentSession({
       ...this.sessionOptions,
       cwd: runCwd,
       agentDir,

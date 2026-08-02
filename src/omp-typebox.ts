@@ -1,5 +1,5 @@
-import { isJsonSchemaValueValid } from "@oh-my-pi/pi-ai/utils/schema";
-import { Type as RuntimeType } from "@oh-my-pi/pi-coding-agent/extensibility/typebox";
+import { hostTypeBox } from "./omp-host.js";
+import { isJsonSchemaValueValid } from "./omp-lazy.js";
 
 export interface TSchema extends Record<string, unknown> {
   safeParse?: (value: unknown) => { success: boolean; data?: unknown };
@@ -28,26 +28,37 @@ export type Static<T extends TSchema> = T extends { readonly static: infer U } ?
 
 type SchemaOptions = Record<string, unknown>;
 
-/** Typed facade over OMP's injected Zod-backed TypeBox compatibility runtime. */
+/**
+ * Typed facade over OMP's injected Zod-backed TypeBox compatibility runtime.
+ *
+ * `hostTypeBox()` is read per call rather than captured at module scope: the
+ * shim arrives with the ExtensionAPI, which is only available once the
+ * extension factory has run.
+ */
 export const Type = {
-  String: (options?: SchemaOptions) => RuntimeType.String(options) as unknown as TypedSchema<string>,
-  Number: (options?: SchemaOptions) => RuntimeType.Number(options) as unknown as TypedSchema<number>,
-  Boolean: (options?: SchemaOptions) => RuntimeType.Boolean(options) as unknown as TypedSchema<boolean>,
-  Any: (options?: SchemaOptions) => RuntimeType.Any(options) as unknown as TypedSchema<unknown>,
+  String: (options?: SchemaOptions) => hostTypeBox().Type.String(options) as unknown as TypedSchema<string>,
+  Number: (options?: SchemaOptions) => hostTypeBox().Type.Number(options) as unknown as TypedSchema<number>,
+  Boolean: (options?: SchemaOptions) => hostTypeBox().Type.Boolean(options) as unknown as TypedSchema<boolean>,
+  Any: (options?: SchemaOptions) => hostTypeBox().Type.Any(options) as unknown as TypedSchema<unknown>,
   Literal: <T extends string | number | boolean>(value: T, options?: SchemaOptions) =>
-    RuntimeType.Literal(value, options) as unknown as TypedSchema<T>,
+    hostTypeBox().Type.Literal(value, options) as unknown as TypedSchema<T>,
   Optional: <T extends TSchema>(schema: T) =>
-    RuntimeType.Optional(schema as never) as unknown as TOptional<Static<T>>,
+    hostTypeBox().Type.Optional(schema as never) as unknown as TOptional<Static<T>>,
   Array: <T extends TSchema>(schema: T, options?: SchemaOptions) =>
-    RuntimeType.Array(schema as never, options) as unknown as TypedSchema<Array<Static<T>>>,
+    hostTypeBox().Type.Array(schema as never, options) as unknown as TypedSchema<Array<Static<T>>>,
   Union: <T extends readonly TSchema[]>(schemas: T, options?: SchemaOptions) =>
-    RuntimeType.Union(schemas as never, options) as unknown as TypedSchema<Static<T[number]>>,
+    hostTypeBox().Type.Union(schemas as never, options) as unknown as TypedSchema<Static<T[number]>>,
   Object: <P extends SchemaRecord>(properties: P, options?: SchemaOptions) =>
-    RuntimeType.Object(properties as never, options) as unknown as TypedSchema<ObjectStatic<P>>,
+    hostTypeBox().Type.Object(properties as never, options) as unknown as TypedSchema<ObjectStatic<P>>,
   Unsafe: <T>(schema: Record<string, unknown>) =>
-    RuntimeType.Unsafe<T>(schema) as unknown as TypedSchema<T>,
+    hostTypeBox().Type.Unsafe<T>(schema) as unknown as TypedSchema<T>,
 };
 
+/**
+ * Validate `value` against `schema`. Schemas minted by `Type` carry `safeParse`;
+ * anything else falls back to the host JSON-Schema validator, which callers must
+ * have warmed via `warmSchemaValidator()`.
+ */
 export function Check(schema: TSchema, value: unknown): boolean {
   return schema.safeParse?.(value).success ?? isJsonSchemaValueValid(schema, value);
 }

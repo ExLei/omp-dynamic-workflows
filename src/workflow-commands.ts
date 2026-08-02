@@ -18,7 +18,15 @@ import { registerSavedWorkflow } from "./saved-commands.js";
 import { buildForcedWorkflowPrompt, WORKFLOW_TOOL_NAME } from "./workflow-editor.js";
 import type { WorkflowManager } from "./workflow-manager.js";
 import { saveLocationOptions, type WorkflowStorage } from "./workflow-saved.js";
-import { openWorkflowNavigator } from "./workflow-ui.js";
+
+/**
+ * The navigator drags in the pi-tui component tree; keep it out of the startup
+ * module graph and load it on the first `/workflows` open instead.
+ */
+async function openNavigator(...args: Parameters<typeof import("./workflow-ui.js").openWorkflowNavigator>) {
+  const { openWorkflowNavigator } = await import("./workflow-ui.js");
+  return openWorkflowNavigator(...args);
+}
 
 const STATUS_ICON: Record<string, string> = {
   pending: "·",
@@ -218,11 +226,11 @@ export function registerWorkflowCommands(
           // Interactive navigator when a UI is available; plain text otherwise
           // (print/RPC mode) or when the user explicitly asks for `list`.
           if (sub !== "list" && ctx.hasUI) {
-            await openWorkflowNavigator(pi, manager, ctx.ui, { storage: opts.storage, cwd: opts.cwd });
+            await openNavigator(pi, manager, ctx.ui, { storage: opts.storage, cwd: opts.cwd });
             return;
           }
           if (parts.length === 0 && ctx.hasUI) {
-            await openWorkflowNavigator(pi, manager, ctx.ui, { storage: opts.storage, cwd: opts.cwd });
+            await openNavigator(pi, manager, ctx.ui, { storage: opts.storage, cwd: opts.cwd });
             return;
           }
           const runs = manager.listRuns();

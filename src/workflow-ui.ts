@@ -13,19 +13,21 @@
  * Component shell (openWorkflowNavigator) wires them to live manager events.
  */
 
-import {
-  type ExtensionAPI,
-  type ExtensionUIContext,
-  getLanguageFromPath,
-  renderDiff,
-  type Theme,
-} from "./omp-api.js";
+import { type ExtensionAPI, type ExtensionUIContext, type Theme } from "./omp-api.js";
+import { host } from "./omp-host.js";
 import type { Component, Focusable, MarkdownTheme, TUI } from "@oh-my-pi/pi-tui";
 import { Ellipsis, Markdown, parseKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
 import { createMarkdownTheme } from "./omp-theme.js";
 import type { AgentUsage } from "./agent.js";
 import type { ThemeLike, WorkflowAgentSnapshot, WorkflowSnapshot } from "./display.js";
-import { aggregateAgentUsage, fmtCost, fmtTokenSegment, tokenFigures } from "./display.js";
+import {
+  aggregateAgentUsage,
+  compactTokens,
+  fmtCost,
+  fmtTokenSegment,
+  shortModel,
+  tokenFigures,
+} from "./display.js";
 import type { PersistedRunState } from "./run-persistence.js";
 import { registerSavedWorkflow } from "./saved-commands.js";
 import type { WorkflowManager } from "./workflow-manager.js";
@@ -170,12 +172,6 @@ function toAgentRow(a: WorkflowAgentSnapshot): AgentRow {
   };
 }
 
-export function shortModel(model: string | undefined): string | undefined {
-  if (!model) return undefined;
-  const m = asText(model);
-  const slash = m.indexOf("/");
-  return slash > 0 ? m.slice(slash + 1) : m;
-}
 
 /** Reads run/phase/agent data from the manager, preferring live snapshots. */
 export class NavigatorModel {
@@ -633,22 +629,6 @@ const ELLIPSIS = "…";
 const LW_MIN = 14;
 const RW_MIN = 24;
 const GAP_NM = 2; // min spaces between agent name and model columns
-
-/** Compact token count: 842, 35k, 35.7k, 1.3M (trailing .0 trimmed). */
-export function compactTokens(t: number): string {
-  if (!t || t <= 0) return "0";
-  if (t < 1000) return String(Math.round(t));
-  if (t < 1_000_000) {
-    const k = t / 1000;
-    const s = k >= 100 ? Math.round(k).toString() : trimZero(k.toFixed(1));
-    return `${s}k`;
-  }
-  const m = t / 1_000_000;
-  return `${trimZero(m.toFixed(1))}M`;
-}
-function trimZero(s: string): string {
-  return s.endsWith(".0") ? s.slice(0, -2) : s;
-}
 
 function pluralize(word: string, n: number): string {
   return n === 1 ? word : `${word}s`;
@@ -1316,7 +1296,7 @@ function historyEntryLanguage(
   if (!entry) return undefined;
   if (entry.kind === "toolCall") {
     const write = writeCallSource(entry);
-    return write ? (getLanguageFromPath(write.path) ?? "text") : "json";
+    return write ? (host().getLanguageFromPath(write.path) ?? "text") : "json";
   }
   if (entry.kind !== "toolResult" || entry.toolName !== "read") return undefined;
 
@@ -1325,7 +1305,7 @@ function historyEntryLanguage(
     if (call?.kind !== "toolCall" || call.toolName !== "read") continue;
     try {
       const args = JSON.parse(asText(call.text)) as { path?: unknown };
-      return typeof args.path === "string" ? getLanguageFromPath(args.path) : undefined;
+      return typeof args.path === "string" ? host().getLanguageFromPath(args.path) : undefined;
     } catch {
       return undefined;
     }
@@ -1435,7 +1415,8 @@ function renderDiffLines(diff: string, width: number, renderCache?: NavigatorTex
   const key = `diff:${renderWidth}:${diff}`;
   const cached = renderCache?.get(key);
   if (cached) return cached;
-  const lines = renderDiff(diff)
+  const lines = host()
+    .renderDiff(diff)
     .split("\n")
     .flatMap((line) => wrapTextWithAnsi(`  ${line}`, renderWidth));
   return renderCache?.set(key, lines, key.length + lines.reduce((sum, line) => sum + line.length, 0)) ?? lines;

@@ -6,27 +6,31 @@ import {
   WORKFLOW_EXTENSION_VERSION,
   type WorkflowReloadRuntime,
 } from "../src/extension-reload.js";
-import {
-  createEffortState,
-  createWebTools,
-  createWorkflowControlTool,
-  createWorkflowStorage,
-  createWorkflowTool,
-  installResultDelivery,
-  installTaskPanel,
-  installWorkflowKeywordArming,
-  loadWorkflowSettings,
-  registerAllSavedWorkflows,
-  registerBuiltinWorkflows,
-  registerEffortCommand,
-  registerWorkflowCommands,
-  registerWorkflowModelsCommand,
-  saveWorkflowSettingsForCwd,
-  UsageLimitScheduler,
-  WorkflowManager,
-} from "../src/index.js";
+import { installHostRuntime } from "../src/omp-host.js";
+// Imported per module rather than through src/index.js: the barrel re-exports
+// the navigator and other on-demand UI, which would drag them back into omp's
+// blocking extension-load path.
+import { registerBuiltinWorkflows } from "../src/builtin-commands.js";
+import { createEffortState, registerEffortCommand } from "../src/effort-command.js";
+import { registerAllSavedWorkflows } from "../src/saved-commands.js";
+import { installResultDelivery, installTaskPanel } from "../src/task-panel.js";
+import { UsageLimitScheduler } from "../src/usage-limit-scheduler.js";
+import { createWebTools } from "../src/web-tools.js";
+import { registerWorkflowCommands } from "../src/workflow-commands.js";
+import { createWorkflowControlTool } from "../src/workflow-control-tool.js";
+import { installWorkflowKeywordArming } from "../src/workflow-editor.js";
+import { WorkflowManager } from "../src/workflow-manager.js";
+import { createWorkflowStorage } from "../src/workflow-saved.js";
+import { loadWorkflowSettings, saveWorkflowSettingsForCwd } from "../src/workflow-settings.js";
+import { createWorkflowTool } from "../src/workflow-tool.js";
+import { registerWorkflowModelsCommand } from "../src/workflows-models-command.js";
 
 export default function extension(pi: ExtensionAPI) {
+  // MUST run before anything else touches the host: every runtime value from
+  // @oh-my-pi/pi-coding-agent is read off this injected namespace instead of
+  // being statically imported, which keeps ~1.4s of module evaluation off
+  // omp's blocking startup path. See src/omp-host.ts.
+  installHostRuntime(pi);
   // Single manager shared by the workflow tool and /workflows command. Pi loads
   // a fresh extension factory for /reload, so explicitly claim the old live
   // manager when session_shutdown staged one; otherwise in-flight promises,

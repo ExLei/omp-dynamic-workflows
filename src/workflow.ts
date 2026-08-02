@@ -15,6 +15,7 @@ import {
   resolveAgentType,
 } from "./agent-registry.js";
 import { DEFAULT_AGENT_TIMEOUT_MS, MAX_AGENT_RETRIES, MAX_AGENTS_PER_RUN, MAX_CONCURRENCY } from "./config.js";
+import { warmFrontmatter } from "./omp-lazy.js";
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js";
 import { createWorkflowLogger } from "./logger.js";
 import { parseModelRoutingFromMeta, resolveModelForPhase } from "./model-routing.js";
@@ -422,6 +423,7 @@ export async function runWorkflow<T = unknown>(
   const baseCwd = options.cwd ?? process.cwd();
   // Snapshot the agentType registry ONCE per run so two agent() calls can't
   // observe a mid-run edit (determinism); a later resume re-reads it.
+  if (!options.agentRegistry) await warmFrontmatter();
   const agentRegistry = options.agentRegistry ?? loadAgentRegistry(baseCwd);
 
   // Initialize logger

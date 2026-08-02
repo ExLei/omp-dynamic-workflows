@@ -22,7 +22,7 @@ import {
 import type { ManagedRun, WorkflowManager } from "./workflow-manager.js";
 import type { WorkflowStorage } from "./workflow-saved.js";
 import type { WorkflowSettings } from "./workflow-settings.js";
-import { compactTokens, shortModel } from "./workflow-ui.js";
+import { compactTokens, shortModel } from "./display.js";
 
 // `tokenUsage` is included so the detailed panel's live token/s counter refreshes
 // as tokens accrue (not only on agent start/end). It is harmless in compact mode —
