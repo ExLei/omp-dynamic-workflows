@@ -1,4 +1,8 @@
-@import "tailwindcss";
+/* Tailwind's auto-detection would walk up to the git root and scan both the
+   TUI sources and the committed `web/dist` bundle — the latter feeds the
+   previous build's class names back in, so the emitted CSS grows depending on
+   whether dist happens to exist. Scan only the app sources. */
+@import "tailwindcss" source("../src");
 @import "@xyflow/react/dist/style.css";
 
 /* Latin + latin-ext subsets only. The CJK glyphs come from the OS UI font:
