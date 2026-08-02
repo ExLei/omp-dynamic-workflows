@@ -1,0 +1,50 @@
+name: web-dist
+
+# `omp plugin install github:zerx-lab/omp-dynamic-workflows` runs `bun install`
+# against a git source, and bun never executes a git dependency's lifecycle
+# scripts unless the consuming package.json trusts it (omp's plugins root does
+# not). The console bundle therefore has to exist in the repository. This job
+# keeps the committed `web/dist` in sync with `web/src` so a forgotten local
+# build can never ship a stale UI.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "!web/dist/**"
+      - ".github/workflows/web-dist.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: web-dist-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+        working-directory: web
+      - run: bun run build
+        working-directory: web
+      - name: Commit refreshed bundle
+        run: |
+          # Vite renames hashed assets, so new files show up as untracked;
+          # `git diff` alone would miss them.
+          if [ -z "$(git status --porcelain -- web/dist)" ]; then
+            echo "web/dist already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A web/dist
+          git commit -m "chore(web): rebuild console bundle"
+          git push

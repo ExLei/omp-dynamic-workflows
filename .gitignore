@@ -3,8 +3,13 @@ node_modules
 
 # output
 out
-dist
+/dist
 *.tgz
+
+# The React console is shipped pre-built: `omp plugin install github:…` clones
+# the repo as-is (bun never runs a git dependency's build scripts unless the
+# consumer lists it in trustedDependencies), so the bundle must be committed.
+!web/dist
 
 # code coverage
 coverage

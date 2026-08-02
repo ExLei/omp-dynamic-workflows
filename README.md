@@ -3,7 +3,21 @@
 OMP-native dynamic workflow orchestration, ported from
 `pi-dynamic-workflows` against the current `@oh-my-pi/*` extension APIs.
 
-## Install for local development
+## Install
+
+```bash
+omp plugin install github:zerx-lab/omp-dynamic-workflows
+```
+
+Nothing to build afterwards: the React console is committed pre-built under
+`web/dist`. `omp plugin install` shells out to `bun install <git spec>`, and bun
+refuses to run a git dependency's lifecycle scripts unless the *consuming*
+`package.json` lists it in `trustedDependencies` — omp's plugins root does not,
+so an install-time `prepare` build would silently never run. The
+`.github/workflows/web-dist.yml` job rebuilds and commits `web/dist` whenever
+`web/**` changes, so the shipped bundle cannot drift from the sources.
+
+### Local development
 
 ```bash
 bun install
@@ -33,10 +47,9 @@ A React/Vite UI over the **live** `WorkflowManager` — the same instance the TU
 navigator and task panel use, so runs, snapshots, and pause/resume/stop are
 shared, not mirrored.
 
-```bash
-bun run web:build   # emit web/dist (once; the server serves it directly)
-omp                 # console starts with the session
-```
+The bundle ships with the plugin, so an install needs no build step. After
+editing `web/src`, refresh it with `bun run web:build` (CI does the same on
+`main`); `OMP_WORKFLOW_WEB_ROOT` overrides the served directory.
 
 ### Opening it
 

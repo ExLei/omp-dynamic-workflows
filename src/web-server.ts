@@ -380,9 +380,11 @@ function resolveWebRoot(): string {
 const NOT_BUILT_HTML = `<!doctype html><meta charset="utf-8"><title>omp workflows</title>
 <body style="background:#0d1117;color:#d7dee6;font:14px ui-monospace,monospace;padding:32px">
 <h2 style="color:#58a6ff">UI 尚未构建</h2>
+<p>插件通过 <code>omp plugin install</code> 安装时自带 <code>web/dist</code>；看到本页说明当前是未构建的源码检出(或安装源过旧)。</p>
 <p>在插件目录执行:</p>
 <pre style="background:#0b0f14;border:1px solid #2b333d;border-radius:6px;padding:12px">cd web &amp;&amp; bun install &amp;&amp; bun run build</pre>
 <p>开发模式:<code>cd web &amp;&amp; bun run dev</code>(Vite 会把 /api 代理到本服务)。</p>
+<p>已有构建产物在别处:设置 <code>OMP_WORKFLOW_WEB_ROOT=/path/to/dist</code>。</p>
 </body>`;
 
 /**
