@@ -1,0 +1,149 @@
+import type { ExtensionAPI, ExtensionContext } from "../src/omp-api.js";
+import {
+  claimWorkflowRuntime,
+  handoffWorkflowRuntime,
+  pauseStrandedWorkflowRuntime,
+  WORKFLOW_EXTENSION_VERSION,
+  type WorkflowReloadRuntime,
+} from "../src/extension-reload.js";
+import {
+  createEffortState,
+  createWebTools,
+  createWorkflowControlTool,
+  createWorkflowStorage,
+  createWorkflowTool,
+  installResultDelivery,
+  installTaskPanel,
+  installWorkflowKeywordArming,
+  loadWorkflowSettings,
+  registerAllSavedWorkflows,
+  registerBuiltinWorkflows,
+  registerEffortCommand,
+  registerWorkflowCommands,
+  registerWorkflowModelsCommand,
+  saveWorkflowSettingsForCwd,
+  UsageLimitScheduler,
+  WorkflowManager,
+} from "../src/index.js";
+
+export default function extension(pi: ExtensionAPI) {
+  // Single manager shared by the workflow tool and /workflows command. Pi loads
+  // a fresh extension factory for /reload, so explicitly claim the old live
+  // manager when session_shutdown staged one; otherwise in-flight promises,
+  // controls, event delivery, and live UI updates would stay on an unreachable
+  // manager even though their persisted snapshots remained visible on disk.
+  const cwd = process.cwd();
+  const storage = createWorkflowStorage(cwd);
+  const settings = loadWorkflowSettings({ cwd });
+  const managerOptions = {
+    loadSavedWorkflow: (name: string) => storage.load(name)?.script,
+    // Named toolsets survive on the persisted run (the tag, not the functions),
+    // so a resumed run re-resolves the tools it started with — e.g. a paused
+    // /deep-research keeps web access instead of degrading to coding tools.
+    toolsets: {
+      "web-research": () => createWebTools(),
+    },
+    // On top of the always-on workflow/workflow_control denial in subagents
+    // (#107), let users block additional recursive-orchestration tools.
+    excludeSubagentTools: settings.excludeSubagentTools,
+    defaultAgentTimeoutMs: settings.defaultAgentTimeoutMs ?? null,
+    defaultTokenBudget: settings.defaultTokenBudget ?? null,
+    concurrency: settings.defaultConcurrency,
+    defaultAgentRetries: settings.defaultAgentRetries,
+    persistAgentSessions: settings.persistAgentSessions,
+  };
+  const runtimeClaim = claimWorkflowRuntime(cwd);
+  const previousRuntime = runtimeClaim.compatible;
+  const pausedForVersionChange = runtimeClaim.versionMismatch
+    ? pauseStrandedWorkflowRuntime(runtimeClaim.versionMismatch)
+    : 0;
+  const manager = previousRuntime?.manager ?? new WorkflowManager({ cwd, ...managerOptions });
+  if (previousRuntime) manager.reconfigureAfterReload(managerOptions);
+  // /effort is independent of the manager implementation and can safely
+  // survive an extension-version fallback to a fresh manager.
+  const effort = (previousRuntime ?? runtimeClaim.versionMismatch)?.effort ?? createEffortState();
+  const runtime: WorkflowReloadRuntime = {
+    cwd,
+    extensionVersion: WORKFLOW_EXTENSION_VERSION,
+    manager,
+    effort,
+  };
+  // Refresh the delivery holder immediately after claiming the manager. On a
+  // reload handoff its listener survives, but Pi invalidates the old ExtensionAPI
+  // before loading this generation.
+  installResultDelivery(pi, manager, { loadSettings: () => loadWorkflowSettings({ cwd }) });
+
+  const workflowTool = createWorkflowTool({ cwd, manager, storage });
+  const workflowControlTool = createWorkflowControlTool({ manager });
+  pi.registerTool(workflowTool);
+  pi.registerTool(workflowControlTool);
+  // Auto-resume runs that paused on a provider usage limit once the quota is
+  // likely refilled. Standalone: only consumes the manager's public surface, so
+  // it stays decoupled from manager/persistence internals. Its constructor also
+  // re-arms any run that was already paused-on-usage_limit before this process
+  // started (cold start), so restarting pi doesn't strand a paused run.
+  const usageLimitScheduler = new UsageLimitScheduler(manager);
+  pi.on("session_shutdown", () => {
+    usageLimitScheduler.dispose();
+    // OMP's shutdown event intentionally has no Pi-style reason field. Keep
+    // the runtime available for an in-process /reload handoff; process exit
+    // naturally releases this process-local holder.
+    handoffWorkflowRuntime(runtime);
+  });
+  // Standing /effort opt-in (off|high|ultra): auto-arms a workflow for substantive
+  // messages, like CC's ultracode. Shared with the editor's input hook below and
+  // with the explicit /workflows run <prompt> manual trigger. It is part of the
+  // reload handoff so /reload does not silently turn the selected effort off.
+  registerWorkflowCommands(pi, manager, { storage, cwd, effort });
+  registerWorkflowModelsCommand(pi);
+  registerBuiltinWorkflows(pi, { cwd, manager, storage });
+  registerAllSavedWorkflows(pi, cwd, storage, manager);
+  registerEffortCommand(pi, effort);
+  // "Workflows mode": type `workflow(s)` to arm a forced workflow at submit
+  // time. Installed once (guarded below) inside session_start alongside the
+  // other per-session installers.
+  let armingInstalled = false;
+
+  pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
+    if (pausedForVersionChange > 0) {
+      ctx.ui.notify(
+        `Workflow extension updated during /reload; paused ${pausedForVersionChange} active workflow(s) for safe resume.`,
+        "warning",
+      );
+    }
+    // Tell the manager the session's main model so "explore" agents auto-tier
+    // down to a lighter same-family sibling (e.g. Claude → Haiku).
+    manager.setMainModel(ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined);
+    // Share the host session's model registry so tier/phase routing resolves
+    // extension-registered providers (e.g. ollama-cloud) consistently. Set it
+    // before activating the tool: the tool's promptGuidelines read the
+    // manager's registry lazily, so tool-registry refreshes from here on
+    // advertise the shared registry's models.
+    manager.setModelRegistry(ctx.modelRegistry);
+    const active = pi.getActiveTools();
+    const workflowTools = [workflowTool.name, workflowControlTool.name];
+    const missing = workflowTools.filter((name) => !active.includes(name));
+    if (missing.length) pi.setActiveTools([...active, ...missing]);
+    // Scope the /workflows history to this session: runs persist on disk across
+    // sessions, but the navigator/task panel show only the current session's runs.
+    // Switching back to a previous session re-shows that session's runs.
+    try {
+      manager.setSessionId(ctx.sessionManager?.getSessionId());
+    } catch {
+      // sessionManager may be unavailable in some contexts — fall back to global history.
+    }
+    // Live "workflows running" panel below the input (focus + enter to open).
+    // Pass a live settings loader so /workflows-progress (compact|detailed) takes
+    // effect without a restart.
+    installTaskPanel(pi, manager, ctx.ui, { storage, cwd, loadSettings: () => loadWorkflowSettings({ cwd }) });
+    if (!armingInstalled) {
+      installWorkflowKeywordArming(pi, effort, {
+        settingsStore: {
+          load: () => loadWorkflowSettings({ cwd }),
+          save: (nextSettings) => saveWorkflowSettingsForCwd(nextSettings, cwd),
+        },
+      });
+      armingInstalled = true;
+    }
+  });
+}
