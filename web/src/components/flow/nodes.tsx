@@ -1,93 +1,158 @@
-import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
+import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import clsx from "clsx";
-import { fmtTokens, STATUS_COLOR } from "../ui";
+import { fmtCost, fmtTokens, STATUS_COLOR } from "../ui";
+
+/** Shared geometry: the flow builders lay nodes out manually, so sizes are fixed. */
+export const LEAF_W = 216;
+export const LEAF_H = 46;
+export const AGENT_W = 232;
+export const AGENT_H = 58;
+/** Container insets: header strip on top, uniform padding elsewhere. */
+export const PAD_X = 12;
+export const PAD_TOP = 32;
+export const PAD_BOTTOM = 12;
+export const GAP = 12;
+
+export type ContainerNodeData = {
+  kind: string;
+  title: string;
+  /** Right-aligned meta, e.g. `L91` or `3 agents`. */
+  meta?: string;
+  /** Semantic hint next to the kind chip, e.g. 并发 / 循环. */
+  hint?: string;
+  dynamic?: boolean;
+  active?: boolean;
+  line?: number;
+};
+
+export type OutlineLeafData = {
+  kind: string;
+  title: string;
+  detail?: string;
+  dynamic: boolean;
+  line: number;
+};
 
 export type AgentNodeData = {
+  agentId: number;
   label: string;
   status: string;
   model?: string;
   tokens?: number;
+  cost?: number;
   preview?: string;
-  agentId: number;
+  selected?: boolean;
 };
-export type PhaseNodeData = { label: string; current: boolean; count: number };
-export type OutlineNodeData = { kind: string; label: string; dynamic: boolean; line: number };
 
 export type FlowNode =
-  | Node<AgentNodeData, "agent">
-  | Node<PhaseNodeData, "phase">
-  | Node<OutlineNodeData, "outline">;
+  | Node<ContainerNodeData, "container">
+  | Node<OutlineLeafData, "outlineLeaf">
+  | Node<AgentNodeData, "agent">;
 
-export function AgentNode({ data, selected }: NodeProps<Node<AgentNodeData, "agent">>) {
+export const KIND_COLOR: Record<string, string> = {
+  phase: "var(--color-accent)",
+  agent: "var(--color-ok)",
+  parallel: "var(--color-busy)",
+  pipeline: "#a371f7",
+  workflow: "#a371f7",
+  checkpoint: "#db6d28",
+  loop: "#db6d28",
+  branch: "#db6d28",
+  fn: "#8b949e",
+};
+
+/** Four anchors so sequence edges can run vertically and containment horizontally. */
+function Anchors() {
+  const style = { width: 5, height: 5, background: "var(--color-ink-600)", border: "none" } as const;
+  return (
+    <>
+      <Handle id="t" type="target" position={Position.Top} style={{ ...style, opacity: 0 }} />
+      <Handle id="l" type="target" position={Position.Left} style={{ ...style, opacity: 0 }} />
+      <Handle id="b" type="source" position={Position.Bottom} style={{ ...style, opacity: 0 }} />
+      <Handle id="r" type="source" position={Position.Right} style={{ ...style, opacity: 0 }} />
+    </>
+  );
+}
+
+/**
+ * A box that visually encloses its children (React Flow renders child nodes on
+ * top of it). Used for phases, `parallel`/`pipeline` blocks and control scopes.
+ */
+export function ContainerNode({ data }: NodeProps<Node<ContainerNodeData, "container">>) {
+  const color = KIND_COLOR[data.kind] ?? "var(--color-ink-300)";
+  return (
+    <div
+      className={clsx(
+        "h-full w-full rounded-lg border bg-ink-850/40",
+        data.active && "shadow-[0_0_0_1px_var(--color-accent)]",
+      )}
+      style={{
+        borderColor: data.active ? "var(--color-accent)" : color,
+        borderStyle: data.dynamic ? "dashed" : "solid",
+      }}
+    >
+      <Anchors />
+      <div className="flex items-center gap-1.5 px-2.5 pt-1.5 text-[11px]">
+        <span className="rounded-sm px-1 py-px" style={{ background: `${color}22`, color }}>
+          {data.kind}
+        </span>
+        {data.hint && <span style={{ color }}>{data.hint}</span>}
+        <span className="truncate font-mono text-[12px] text-ink-100">{data.title}</span>
+        {data.meta && <span className="ml-auto shrink-0 font-mono text-ink-300">{data.meta}</span>}
+      </div>
+    </div>
+  );
+}
+
+/** A tracked call with no tracked calls inside it. */
+export function OutlineLeafNode({ data }: NodeProps<Node<OutlineLeafData, "outlineLeaf">>) {
+  const color = KIND_COLOR[data.kind] ?? "var(--color-ink-300)";
+  return (
+    <div
+      className="h-full w-full overflow-hidden rounded-md border bg-ink-800 px-2 py-1"
+      style={{ borderColor: "var(--color-ink-600)", borderLeft: `3px solid ${color}` }}
+    >
+      <Anchors />
+      <div className="flex items-center gap-1.5">
+        <span className="shrink-0 text-[11px]" style={{ color }}>
+          {data.kind}
+        </span>
+        <span className="truncate font-mono text-[12px] text-ink-100">{data.title}</span>
+        <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-300">L{data.line}</span>
+      </div>
+      <div className={clsx("truncate text-[10px]", data.dynamic ? "text-busy" : "text-ink-300")}>
+        {data.dynamic ? "运行期决定" : (data.detail ?? "")}
+      </div>
+    </div>
+  );
+}
+
+export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
   const color = STATUS_COLOR[data.status] ?? "var(--color-ink-300)";
   return (
     <div
       className={clsx(
-        "w-[200px] rounded-md border bg-ink-800 px-2 py-1.5 text-left",
-        selected ? "border-accent" : "border-ink-600",
+        "h-full w-full cursor-pointer overflow-hidden rounded-md border bg-ink-800 px-2 py-1 transition-colors",
+        data.selected ? "border-accent bg-ink-700" : "border-ink-600 hover:border-accent/60",
       )}
       style={{ borderLeft: `3px solid ${color}` }}
     >
-      <Handle type="target" position={Position.Left} className="!size-1.5 !border-0 !bg-ink-600" />
+      <Anchors />
       <div className="flex items-center gap-1.5">
         <span
-          className={clsx("inline-block size-2 rounded-full", data.status === "running" && "animate-pulse")}
+          className={clsx("inline-block size-2 shrink-0 rounded-full", data.status === "running" && "animate-pulse")}
           style={{ background: color }}
         />
-        <span className="truncate text-[11px] text-ink-100">{data.label}</span>
-        <span className="ml-auto text-[9px] text-ink-300">{fmtTokens(data.tokens)}</span>
+        <span className="truncate font-mono text-[12px] text-ink-100">{data.label}</span>
+        <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-300">{fmtTokens(data.tokens)}</span>
       </div>
-      {data.model && <div className="truncate text-[9px] text-ink-300">{data.model}</div>}
-      {data.preview && <div className="truncate text-[9px] text-ink-300 italic">{data.preview}</div>}
-      <Handle type="source" position={Position.Right} className="!size-1.5 !border-0 !bg-ink-600" />
-    </div>
-  );
-}
-
-export function PhaseNode({ data }: NodeProps<Node<PhaseNodeData, "phase">>) {
-  return (
-    <div
-      className={clsx(
-        "w-[200px] rounded-md border px-2 py-1 text-center",
-        data.current ? "border-accent bg-accent/10 text-accent" : "border-ink-600 bg-ink-850 text-ink-300",
-      )}
-    >
-      <Handle type="target" position={Position.Left} className="!size-1.5 !border-0 !bg-ink-600" />
-      <div className="truncate text-[11px]">{data.label}</div>
-      <div className="text-[9px] opacity-70">{data.count} agents</div>
-      <Handle type="source" position={Position.Right} className="!size-1.5 !border-0 !bg-ink-600" />
-    </div>
-  );
-}
-
-const KIND_COLOR: Record<string, string> = {
-  phase: "var(--color-accent)",
-  agent: "var(--color-ok)",
-  parallel: "var(--color-busy)",
-  pipeline: "var(--color-busy)",
-  workflow: "#a371f7",
-  checkpoint: "#db6d28",
-};
-
-export function OutlineFlowNode({ data }: NodeProps<Node<OutlineNodeData, "outline">>) {
-  const color = KIND_COLOR[data.kind] ?? "var(--color-ink-300)";
-  return (
-    <div
-      className="w-[190px] rounded-md border border-ink-600 bg-ink-800 px-2 py-1"
-      style={{ borderLeft: `3px solid ${color}` }}
-    >
-      <Handle type="target" position={Position.Left} className="!size-1.5 !border-0 !bg-ink-600" />
-      <div className="flex items-center gap-1.5">
-        <span className="text-[10px]" style={{ color }}>
-          {data.kind}
-        </span>
-        <span className="truncate text-[11px] text-ink-100">{data.label}</span>
-        <span className="ml-auto text-[9px] text-ink-300">L{data.line}</span>
+      <div className="flex items-center gap-1.5 font-mono text-[10px] text-ink-300">
+        <span className="truncate">{data.model ?? "—"}</span>
+        {data.cost ? <span className="ml-auto shrink-0">{fmtCost(data.cost)}</span> : null}
       </div>
-      {data.dynamic && <div className="text-[9px] text-busy">运行期决定</div>}
-      <Handle type="source" position={Position.Right} className="!size-1.5 !border-0 !bg-ink-600" />
+      <div className="truncate text-[10px] text-ink-300 italic">{data.preview ?? ""}</div>
     </div>
   );
 }
 
-export const nodeTypes = { agent: AgentNode, phase: PhaseNode, outline: OutlineFlowNode };
+export const nodeTypes = { container: ContainerNode, outlineLeaf: OutlineLeafNode, agent: AgentNode };

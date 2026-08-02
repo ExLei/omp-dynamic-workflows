@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, eventsUrl } from "./lib/api";
 import type {
+  AgentSnapshot,
   FeedEntry,
   ParseResult,
   RunDetail,
@@ -63,6 +64,11 @@ interface WorkflowStore {
   snapshots: Record<string, WorkflowSnapshot>;
   selectedRunId: string | null;
   selectedAgentId: number | null;
+  /** Untrimmed record for the agent the drawer shows; see /api/runs/:id/agents/:id. */
+  agentDetail: { runId: string; agentId: number; agent: AgentSnapshot } | null;
+  agentDetailLoading: boolean;
+  /** Editor jump target set by clicking a static-outline node. */
+  focusLine: number | null;
   feed: FeedEntry[];
   script: string;
   argsText: string;
@@ -78,6 +84,8 @@ interface WorkflowStore {
   selectRun: (runId: string) => Promise<void>;
   loadDetail: (runId: string) => Promise<RunDetail | null>;
   selectAgent: (agentId: number | null) => void;
+  loadAgentDetail: () => Promise<void>;
+  focusOutline: (line: number) => void;
   setScript: (script: string) => void;
   setArgsText: (argsText: string) => void;
   setRunName: (name: string) => void;
@@ -108,6 +116,20 @@ function pushFeed(feed: FeedEntry[], type: string, payload: Record<string, unkno
   return [entry, ...feed].slice(0, FEED_LIMIT);
 }
 
+/**
+ * The focused agent is refetched on its own events rather than riding the
+ * snapshot: history bursts (one entry per tool call) would otherwise force a
+ * full-run refetch per token.
+ */
+let detailTimer: ReturnType<typeof setTimeout> | undefined;
+function scheduleAgentDetail(load: () => void): void {
+  if (detailTimer) return;
+  detailTimer = setTimeout(() => {
+    detailTimer = undefined;
+    load();
+  }, 250);
+}
+
 export const useStore = create<WorkflowStore>((set, get) => ({
   connected: false,
   cwd: "",
@@ -117,6 +139,9 @@ export const useStore = create<WorkflowStore>((set, get) => ({
   snapshots: {},
   selectedRunId: null,
   selectedAgentId: null,
+  agentDetail: null,
+  agentDetailLoading: false,
+  focusLine: null,
   feed: [],
   script: SAMPLE_SCRIPT,
   argsText: "{}",
@@ -151,6 +176,17 @@ export const useStore = create<WorkflowStore>((set, get) => ({
         if (runId) void get().loadDetail(runId);
       });
     }
+    // Keep the open drawer live. Its own events are the trigger; a run-wide
+    // refetch on every history burst would be wasteful.
+    for (const type of ["agentHistory", "agentUsage", "agentEnd", "complete", "error", "stopped"] as const) {
+      source.addEventListener(type, (event) => {
+        const payload = JSON.parse((event as MessageEvent).data) as { runId?: string; agentId?: number };
+        const { selectedRunId, selectedAgentId } = get();
+        if (selectedAgentId === null || payload.runId !== selectedRunId) return;
+        if (typeof payload.agentId === "number" && payload.agentId !== selectedAgentId) return;
+        scheduleAgentDetail(() => void get().loadAgentDetail());
+      });
+    }
     for (const type of FEED_EVENTS) {
       source.addEventListener(type, (event) => {
         const payload = JSON.parse((event as MessageEvent).data) as Record<string, unknown>;
@@ -166,7 +202,7 @@ export const useStore = create<WorkflowStore>((set, get) => ({
   },
 
   async selectRun(runId) {
-    set({ selectedRunId: runId, selectedAgentId: null });
+    set({ selectedRunId: runId, selectedAgentId: null, agentDetail: null });
     const detail = await get().loadDetail(runId);
     if (detail?.script) set({ script: detail.script });
   },
@@ -189,6 +225,32 @@ export const useStore = create<WorkflowStore>((set, get) => ({
 
   selectAgent(agentId) {
     set({ selectedAgentId: agentId });
+    if (agentId === null) set({ agentDetail: null });
+    else void get().loadAgentDetail();
+  },
+
+  async loadAgentDetail() {
+    const { selectedRunId, selectedAgentId, agentDetail } = get();
+    if (!selectedRunId || selectedAgentId === null) return;
+    // Only show the spinner on a cold open; a live refresh must not blank the pane.
+    const cold = agentDetail?.runId !== selectedRunId || agentDetail.agentId !== selectedAgentId;
+    if (cold) set({ agentDetailLoading: true, agentDetail: null });
+    try {
+      const detail = await api.agentDetail(selectedRunId, selectedAgentId);
+      const current = get();
+      // A slow response for an agent the user already left must not overwrite.
+      if (current.selectedRunId !== selectedRunId || current.selectedAgentId !== selectedAgentId) return;
+      set({ agentDetail: { runId: selectedRunId, agentId: selectedAgentId, agent: detail.agent } });
+    } catch {
+      // Persisted runs pruned from disk simply have no detail; the drawer falls
+      // back to the snapshot copy.
+    } finally {
+      if (cold) set({ agentDetailLoading: false });
+    }
+  },
+
+  focusOutline(line) {
+    set({ focusLine: line });
   },
 
   setScript(script) {

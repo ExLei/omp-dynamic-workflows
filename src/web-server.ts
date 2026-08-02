@@ -257,6 +257,21 @@ export function startWorkflowWebServer(options: WorkflowWebServerOptions): Workf
       return json({ ok: true, saved: { name: saved.name, path: saved.path, location: saved.location } });
     }
 
+    // Per-agent detail. The SSE snapshot deliberately ships trimmed agents
+    // (prompt 400 chars, last 6 history entries) so a 20-agent run does not
+    // re-broadcast megabytes on every tick; the drawer that actually displays
+    // one agent's transcript pulls the untrimmed record here instead.
+    const agentMatch = /^\/api\/runs\/([^/]+)\/agents\/(\d+)$/.exec(path);
+    if (agentMatch && request.method === "GET") {
+      const runId = decodeURIComponent(agentMatch[1]!);
+      const agentId = Number(agentMatch[2]);
+      const live = manager.getRun(runId);
+      const snapshot = live?.snapshot ?? persistedSnapshot(manager.listAllRuns().find((r) => r.runId === runId));
+      const agent = snapshot?.agents.find((entry) => entry.id === agentId);
+      if (!agent) return json({ error: "not found" }, 404);
+      return json({ runId, live: Boolean(live), agent: serializeAgent(agent, true) });
+    }
+
     const runMatch = /^\/api\/runs\/([^/]+)(?:\/(pause|resume|stop))?$/.exec(path);
     if (runMatch) {
       const runId = decodeURIComponent(runMatch[1]!);

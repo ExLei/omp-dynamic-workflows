@@ -1,8 +1,10 @@
 import { useEffect } from "react";
+import { AgentDrawer } from "./components/AgentDrawer";
 import { Authoring } from "./components/Authoring";
-import { SaveDialog } from "./components/SaveDialog";
 import { RunList } from "./components/RunList";
 import { Runtime } from "./components/Runtime";
+import { SaveDialog } from "./components/SaveDialog";
+import { SplitGroup, SplitHandle, SplitPane } from "./components/Split";
 import { useStore } from "./store";
 
 export default function App() {
@@ -20,21 +22,26 @@ export default function App() {
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-ink-600 bg-ink-800 px-3 py-1.5">
         <span className="font-semibold text-accent">omp workflows</span>
-        <span className="truncate text-[11px] text-ink-300">{cwd}</span>
-        <span className={connected ? "ml-auto text-[11px] text-ok" : "ml-auto text-[11px] text-ink-300"}>
+        <span className="truncate font-mono text-[12px] text-ink-300">{cwd}</span>
+        <span className={connected ? "ml-auto text-[12px] text-ok" : "ml-auto text-[12px] text-ink-300"}>
           {connected ? "● 实时已连接" : "○ 未连接"}
         </span>
       </header>
-      <main className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_minmax(0,1.15fr)]">
-        <div className="min-h-0 border-r border-ink-600">
-          <RunList />
-        </div>
-        <div className="min-h-0 border-r border-ink-600">
-          <Authoring />
-        </div>
-        <div className="min-h-0">
-          <Runtime />
-        </div>
+      <main className="relative min-h-0 flex-1">
+        <SplitGroup id="main" orientation="horizontal">
+          <SplitPane id="runs" defaultSize="17%" minSize="140px">
+            <RunList />
+          </SplitPane>
+          <SplitHandle orientation="horizontal" />
+          <SplitPane id="authoring" defaultSize="41%" minSize="260px">
+            <Authoring />
+          </SplitPane>
+          <SplitHandle orientation="horizontal" />
+          <SplitPane id="runtime" defaultSize="42%" minSize="280px">
+            <Runtime />
+          </SplitPane>
+        </SplitGroup>
+        <AgentDrawer />
       </main>
       <SaveDialog />
     </div>

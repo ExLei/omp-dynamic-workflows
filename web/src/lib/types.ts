@@ -89,12 +89,16 @@ export interface ServerState {
   builtins: Array<{ name: string; description: string }>;
 }
 
+export type OutlineFlow = "sequence" | "parallel";
+
 export interface OutlineNode {
   kind: string;
   name?: string;
   detail?: string;
   line: number;
+  endLine: number;
   dynamic: boolean;
+  flow: OutlineFlow;
   children: OutlineNode[];
 }
 
@@ -140,6 +144,12 @@ export interface RunDetail {
   error: { message: string; code?: string } | null;
   durationMs: number | null;
   snapshot: WorkflowSnapshot | null;
+}
+
+export interface AgentDetail {
+  runId: string;
+  live: boolean;
+  agent: AgentSnapshot;
 }
 
 /** One line in the live event feed. */

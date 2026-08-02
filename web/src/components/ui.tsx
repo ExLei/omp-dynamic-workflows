@@ -38,7 +38,7 @@ export function Panel({
   return (
     <section className={clsx("flex min-h-0 flex-col", className)}>
       <div className="flex items-center gap-2 border-b border-ink-600 bg-ink-800 px-3 py-1.5">
-        <h2 className="text-[10px] tracking-[0.12em] text-ink-300 uppercase">{title}</h2>
+        <h2 className="text-[11px] tracking-[0.12em] text-ink-300 uppercase">{title}</h2>
         <div className="ml-auto flex items-center gap-2">{right}</div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">{children}</div>
@@ -66,7 +66,7 @@ export function Button({
       disabled={disabled}
       onClick={onClick}
       className={clsx(
-        "rounded border px-2 py-1 text-xs transition-colors",
+        "rounded border px-2 py-1 text-[13px] transition-colors",
         "disabled:cursor-default disabled:opacity-35",
         tone === "primary"
           ? "border-accent/60 bg-accent/10 text-accent hover:enabled:bg-accent/20"

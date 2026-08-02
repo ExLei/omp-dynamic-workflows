@@ -1,6 +1,47 @@
 @import "tailwindcss";
 @import "@xyflow/react/dist/style.css";
 
+/* Latin + latin-ext subsets only. The CJK glyphs come from the OS UI font:
+   bundling a Han webfont would add megabytes for text the system already has. */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/inter/files/inter-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-ext-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 @theme {
   --color-ink-950: #0b0f14;
   --color-ink-900: #0d1117;
@@ -8,12 +49,20 @@
   --color-ink-800: #151b23;
   --color-ink-700: #1c232c;
   --color-ink-600: #2b333d;
-  --color-ink-300: #8b97a4;
-  --color-ink-100: #d7dee6;
+  --color-ink-300: #97a3b1;
+  --color-ink-100: #dce4ec;
   --color-accent: #58a6ff;
   --color-ok: #3fb950;
   --color-busy: #d29922;
   --color-bad: #f85149;
+
+  /* CJK always falls through to the OS UI face; a Latin-only webfont must never
+     drag Chinese into a serif fallback. */
+  --font-cjk: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC",
+    "Source Han Sans SC", sans-serif;
+  --font-sans: "Inter Variable", -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, var(--font-cjk);
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas,
+    var(--font-cjk);
 }
 
 html,
@@ -26,8 +75,23 @@ body {
   margin: 0;
   background: var(--color-ink-900);
   color: var(--color-ink-100);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-sans);
   font-size: 13px;
+  line-height: 1.5;
+  /* Ids, token counts and costs sit in columns; proportional digits make them jitter. */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Anything that is literally code or model output stays monospaced. */
+pre,
+code,
+kbd,
+samp,
+textarea {
+  font-family: var(--font-mono);
+  font-size: inherit;
 }
 
 ::-webkit-scrollbar {
@@ -46,6 +110,21 @@ body {
 .react-flow__node {
   font-family: inherit;
 }
+.react-flow__controls {
+  border: 1px solid var(--color-ink-600);
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: none;
+}
+.react-flow__controls-button {
+  background: var(--color-ink-800);
+  border-bottom: 1px solid var(--color-ink-600);
+  fill: var(--color-ink-100);
+}
+.react-flow__controls-button:hover {
+  background: var(--color-ink-700);
+  fill: var(--color-accent);
+}
 
 /* CodeMirror ships an auto-height editor; force it to fill the flex slot so the
    gutter and click target cover the whole pane instead of stopping after the
@@ -56,6 +135,9 @@ body {
 }
 .cm-theme-dark .cm-scroller {
   overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
 }
 .cm-theme-dark .cm-gutters {
   background: var(--color-ink-950);

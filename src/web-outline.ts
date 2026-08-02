@@ -8,6 +8,11 @@
  * acorn is otherwise only used there to read `export const meta`). Anything this
  * outline cannot resolve is reported as `dynamic`, so the UI can show "N agents,
  * width unknown until run" instead of pretending a fixed DAG exists.
+ *
+ * What it *does* guarantee is topology: siblings are emitted in source order
+ * (= execution order for straight-line code), control-flow scopes become
+ * explicit container nodes, and the statements a `phase()` marker governs are
+ * nested under that phase — the same shape the runtime graph has.
  */
 
 import { parse } from "acorn";
@@ -28,27 +33,38 @@ const TRACKED = new Set([
   "gate",
 ]);
 
-/** Nodes whose body makes the enclosed call count unknowable without running. */
-const DYNAMIC_SCOPES = new Set([
-  "ForStatement",
-  "ForOfStatement",
-  "ForInStatement",
-  "WhileStatement",
-  "DoWhileStatement",
-  "IfStatement",
-  "ConditionalExpression",
-  "SwitchStatement",
+/** Tracked calls whose children run concurrently rather than one after another. */
+const CONCURRENT = new Set(["parallel", "judgePanel"]);
+
+/** Statements whose body makes the enclosed call count unknowable without running. */
+const SCOPE_KIND = new Map<string, { kind: "loop" | "branch"; name: string }>([
+  ["ForStatement", { kind: "loop", name: "for" }],
+  ["ForOfStatement", { kind: "loop", name: "for…of" }],
+  ["ForInStatement", { kind: "loop", name: "for…in" }],
+  ["WhileStatement", { kind: "loop", name: "while" }],
+  ["DoWhileStatement", { kind: "loop", name: "do…while" }],
+  ["IfStatement", { kind: "branch", name: "if" }],
+  ["ConditionalExpression", { kind: "branch", name: "?:" }],
+  ["SwitchStatement", { kind: "branch", name: "switch" }],
 ]);
 
+/** How a node's children relate to each other. */
+export type OutlineFlow = "sequence" | "parallel";
+
 export interface OutlineNode {
+  /** Tracked call name (`phase`, `agent`, …) or a control scope: `loop` / `branch` / `fn`. */
   kind: string;
-  /** Phase title / agent label when statically known. */
+  /** Phase title / agent label / scope name when statically known. */
   name?: string;
   /** First statically known prompt fragment, for tooltips. */
   detail?: string;
+  /** 1-based source line of the call, and of its last line. */
   line: number;
+  endLine: number;
   /** True when the call sits inside a loop/branch, or its arguments are computed. */
   dynamic: boolean;
+  /** Whether `children` run one after another or all at once. */
+  flow: OutlineFlow;
   children: OutlineNode[];
 }
 
@@ -66,7 +82,20 @@ export interface WorkflowOutline {
 interface AstNode {
   type: string;
   start: number;
+  end: number;
   [key: string]: unknown;
+}
+
+/** Pre-line-mapping node; `start` also carries the sibling sort key. */
+interface Draft {
+  kind: string;
+  name?: string;
+  detail?: string;
+  start: number;
+  end: number;
+  dynamic: boolean;
+  flow: OutlineFlow;
+  children: Draft[];
 }
 
 export function outlineWorkflowScript(script: string): WorkflowOutline {
@@ -84,9 +113,7 @@ export function outlineWorkflowScript(script: string): WorkflowOutline {
     return outline;
   }
 
-  const lineAt = lineIndex(script);
-
-  const walk = (node: unknown, parent: OutlineNode[], inDynamicScope: boolean): void => {
+  const walk = (node: unknown, parent: Draft[], inDynamicScope: boolean): void => {
     if (!node || typeof node !== "object") return;
     if (Array.isArray(node)) {
       for (const child of node) walk(child, parent, inDynamicScope);
@@ -95,39 +122,115 @@ export function outlineWorkflowScript(script: string): WorkflowOutline {
     const ast = node as AstNode;
     if (typeof ast.type !== "string") return;
 
-    const dynamicScope = inDynamicScope || DYNAMIC_SCOPES.has(ast.type);
-
     if (ast.type === "CallExpression") {
       const callee = ast.callee as AstNode | undefined;
       const name = callee?.type === "Identifier" ? (callee.name as string) : undefined;
       if (name && TRACKED.has(name)) {
         const args = (ast.arguments ?? []) as AstNode[];
         const label = staticLabel(name, args);
-        const entry: OutlineNode = {
+        const entry: Draft = {
           kind: name,
           name: label.name,
           detail: label.detail,
-          line: lineAt(ast.start),
-          dynamic: dynamicScope || label.dynamic,
+          start: ast.start,
+          end: ast.end,
+          dynamic: inDynamicScope || label.dynamic,
+          flow: CONCURRENT.has(name) ? "parallel" : "sequence",
           children: [],
         };
         parent.push(entry);
         if (name === "agent") outline.agentCallSites++;
         if (name === "phase" && label.name) outline.phases.push(label.name);
         if (entry.dynamic) outline.hasDynamicFanout = true;
-        for (const arg of args) walk(arg, entry.children, dynamicScope);
+        for (const arg of args) walk(arg, entry.children, inDynamicScope);
         return;
       }
     }
 
-    for (const key of Object.keys(ast)) {
-      if (key === "type" || key === "start" || key === "end" || key === "loc") continue;
-      walk(ast[key], parent, dynamicScope);
+    // Control flow and named helpers become containers, but only when they
+    // actually enclose tracked calls — an unrelated `if` is not orchestration.
+    const scope = scopeFor(ast);
+    if (scope) {
+      const children: Draft[] = [];
+      for (const key of childKeys(ast)) walk(ast[key], children, scope.dynamic || inDynamicScope);
+      if (children.length > 0) {
+        parent.push({
+          kind: scope.kind,
+          name: scope.name,
+          start: ast.start,
+          end: ast.end,
+          dynamic: scope.dynamic,
+          flow: "sequence",
+          children,
+        });
+        if (scope.dynamic) outline.hasDynamicFanout = true;
+      }
+      return;
     }
+
+    for (const key of childKeys(ast)) walk(ast[key], parent, inDynamicScope);
   };
 
-  walk(program.body, outline.nodes, false);
+  const drafts: Draft[] = [];
+  walk(program.body, drafts, false);
+
+  const lineAt = lineIndex(script);
+  outline.nodes = finalize(drafts, lineAt);
   return outline;
+}
+
+function childKeys(ast: AstNode): string[] {
+  return Object.keys(ast).filter((key) => key !== "type" && key !== "start" && key !== "end" && key !== "loc");
+}
+
+function scopeFor(ast: AstNode): { kind: string; name: string; dynamic: boolean } | undefined {
+  const flow = SCOPE_KIND.get(ast.type);
+  if (flow) return { ...flow, dynamic: true };
+  if (ast.type === "FunctionDeclaration") {
+    const id = ast.id as AstNode | undefined;
+    const name = id?.type === "Identifier" ? (id.name as string) : "fn";
+    // A helper's calls fire wherever it is invoked, which the outline cannot see.
+    return { kind: "fn", name: `${name}()`, dynamic: true };
+  }
+  return undefined;
+}
+
+/** Sort each sibling list into execution order, fold phases, and map offsets to lines. */
+function finalize(drafts: Draft[], lineAt: (offset: number) => number): OutlineNode[] {
+  const ordered = foldPhases([...drafts].sort((a, b) => a.start - b.start));
+  return ordered.map((draft) => ({
+    kind: draft.kind,
+    name: draft.name,
+    detail: draft.detail,
+    line: lineAt(draft.start),
+    endLine: lineAt(draft.end),
+    dynamic: draft.dynamic,
+    flow: draft.flow,
+    children: finalize(draft.children, lineAt),
+  }));
+}
+
+/**
+ * `phase("x")` is a marker, not a container: everything between it and the next
+ * marker belongs to that phase at runtime. Re-parent those siblings so the
+ * static graph has the same phase→agents shape the live graph has.
+ */
+function foldPhases(list: Draft[]): Draft[] {
+  if (!list.some((draft) => draft.kind === "phase")) return list;
+  const out: Draft[] = [];
+  let current: Draft | undefined;
+  for (const draft of list) {
+    if (draft.kind === "phase") {
+      current = draft;
+      out.push(draft);
+    } else if (current) {
+      current.children.push(draft);
+      current.end = Math.max(current.end, draft.end);
+    } else {
+      out.push(draft);
+    }
+  }
+  return out;
 }
 
 function staticLabel(

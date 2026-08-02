@@ -93,13 +93,24 @@ TUI's assistant into an unsolicited (billable) turn.
 
 ### What it shows
 
-Live run list, runtime agent DAG built from real
-`agentStart`/`agentEnd` events, per-agent tokens/cost/model/history, logs, an SSE
-event feed, and the run's return value. Authoring is a CodeMirror JS editor over
-the same script the tool and slash commands run — no reduced graph DSL — plus a
-*best-effort* static outline that flags anything whose fan-out is only decided at
-runtime. Saving prompts for the project (`.omp/workflows/saved`) or personal
-(`~/.omp/workflows/saved`) scope and registers the slash command immediately.
+Live run list, a runtime graph whose phases are containers holding the agents
+they actually produced (built from real `agentStart`/`agentEnd` events), logs, an
+SSE event feed, and the run's return value. Clicking any agent — in the graph or
+the table — opens a right-hand drawer with that agent's untrimmed transcript,
+refreshed live from `/api/runs/:id/agents/:id` while it runs; snapshot pushes stay
+trimmed so a wide fan-out does not re-broadcast every transcript on each tick.
+
+Authoring is a CodeMirror JS editor over the same script the tool and slash
+commands run — no reduced graph DSL — beside a *best-effort* static structure
+graph: containment is drawn as nesting (a `phase` owns the calls that follow it,
+a `parallel` block owns its branches), execution order as arrows between
+siblings, and anything whose fan-out is only decided at runtime is dashed.
+Clicking a node reveals the call it came from in the editor.
+
+Every region is a drag-resizable pane; layouts persist per group in
+`localStorage`. Saving prompts for the project (`.omp/workflows/saved`) or
+personal (`~/.omp/workflows/saved`) scope and registers the slash command
+immediately.
 
 Frontend development against a running server:
 

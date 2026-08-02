@@ -51,8 +51,11 @@ describe("workflow static outline", () => {
     // the analyzer must not pretend to know the width.
     expect(outline.agentCallSites).toBe(1);
     expect(outline.hasDynamicFanout).toBe(true);
-    expect(outline.nodes.map((node) => node.kind)).toEqual(["phase", "parallel"]);
-    expect(outline.nodes[1]?.children.map((node) => node.kind)).toEqual(["agent"]);
+    // `phase()` is a marker at runtime, so the statements it governs hang off it.
+    expect(outline.nodes.map((node) => node.kind)).toEqual(["phase"]);
+    expect(outline.nodes[0]?.children.map((node) => node.kind)).toEqual(["parallel"]);
+    expect(outline.nodes[0]?.children[0]?.flow).toBe("parallel");
+    expect(outline.nodes[0]?.children[0]?.children.map((node) => node.kind)).toEqual(["agent"]);
   });
 
   test("a straight-line script reports no dynamic fan-out", () => {
@@ -60,7 +63,43 @@ describe("workflow static outline", () => {
       `export const meta = { name: "s", description: "d" };\nawait phase("one");\nawait agent("go", { label: "solo" });`,
     );
     expect(outline.hasDynamicFanout).toBe(false);
-    expect(outline.nodes.map((node) => node.name)).toEqual(["one", "solo"]);
+    expect(outline.nodes.map((node) => node.name)).toEqual(["one"]);
+    expect(outline.nodes[0]?.children.map((node) => node.name)).toEqual(["solo"]);
+  });
+
+  test("siblings keep execution order and each phase owns the calls that follow it", () => {
+    const outline = outlineWorkflowScript(
+      [
+        `export const meta = { name: "s", description: "d" };`,
+        `await phase("a");`,
+        `await agent("first", { label: "one" });`,
+        `await agent("second", { label: "two" });`,
+        `await phase("b");`,
+        `await agent("third", { label: "three" });`,
+      ].join("\n"),
+    );
+    expect(outline.nodes.map((node) => node.name)).toEqual(["a", "b"]);
+    expect(outline.nodes[0]?.children.map((node) => node.name)).toEqual(["one", "two"]);
+    expect(outline.nodes[1]?.children.map((node) => node.name)).toEqual(["three"]);
+    // Line numbers must be the real call sites, not the fold order.
+    expect(outline.nodes[0]?.children.map((node) => node.line)).toEqual([3, 4]);
+  });
+
+  test("a loop becomes an explicit container, since its width is unknowable", () => {
+    const outline = outlineWorkflowScript(
+      [
+        `export const meta = { name: "s", description: "d" };`,
+        `for (const area of args.areas) {`,
+        `  await agent("scan", { label: "scout" });`,
+        `}`,
+      ].join("\n"),
+    );
+    expect(outline.nodes.map((node) => node.kind)).toEqual(["loop"]);
+    expect(outline.nodes[0]?.dynamic).toBe(true);
+    expect(outline.nodes[0]?.children.map((node) => node.kind)).toEqual(["agent"]);
+    // Inside a loop even a fully literal agent call has unknown multiplicity.
+    expect(outline.nodes[0]?.children[0]?.dynamic).toBe(true);
+    expect(outline.hasDynamicFanout).toBe(true);
   });
 
   test("a syntax error is reported, never thrown", () => {
@@ -154,6 +193,29 @@ describe("workflow web server", () => {
       expect(events.get("agentEnd")).toBe(2);
       expect(events.get("complete")).toBe(1);
       expect(events.get("snapshot")).toBeGreaterThan(0);
+    });
+  });
+
+  test("the agent endpoint serves the untrimmed record the drawer needs", async () => {
+    await withServer(async (server) => {
+      const base = `http://127.0.0.1:${server.port}`;
+      const { runId } = await (
+        await fetch(`${base}/api/runs`, { method: "POST", headers: auth, body: JSON.stringify({ script: SCRIPT }) })
+      ).json();
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const detail = await (await fetch(`${base}/api/runs/${runId}`, { headers: auth })).json();
+        if (detail.status === "completed" || detail.status === "failed") break;
+        await Bun.sleep(25);
+      }
+
+      const agent = await (await fetch(`${base}/api/runs/${runId}/agents/1`, { headers: auth })).json();
+      expect(agent.agent.id).toBe(1);
+      expect(agent.agent.label).toBe("w-a");
+      // `result` is stripped from snapshot pushes; this endpoint must carry it.
+      expect(agent.agent.result).toBe("done:scan a");
+
+      expect((await fetch(`${base}/api/runs/${runId}/agents/99`, { headers: auth })).status).toBe(404);
+      expect((await fetch(`${base}/api/runs/nope/agents/1`, { headers: auth })).status).toBe(404);
     });
   });
 

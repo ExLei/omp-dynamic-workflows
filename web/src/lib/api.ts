@@ -1,4 +1,4 @@
-import type { ParseResult, RunDetail, SaveLocation, SaveLocations, ServerState } from "./types";
+import type { AgentDetail, ParseResult, RunDetail, SaveLocation, SaveLocations, ServerState } from "./types";
 
 /**
  * The server binds loopback and requires a per-process bearer token; omp prints
@@ -42,6 +42,8 @@ export const api = {
   parse: (script: string) => call<ParseResult>("/api/parse", { method: "POST", body: JSON.stringify({ script }) }),
   start: (body: StartRunBody) => call<{ runId: string }>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   detail: (runId: string) => call<RunDetail>(`/api/runs/${encodeURIComponent(runId)}`),
+  agentDetail: (runId: string, agentId: number) =>
+    call<AgentDetail>(`/api/runs/${encodeURIComponent(runId)}/agents/${agentId}`),
   control: (runId: string, action: "pause" | "resume" | "stop") =>
     call<{ ok: boolean }>(`/api/runs/${encodeURIComponent(runId)}/${action}`, { method: "POST" }),
   remove: (runId: string) => call<{ ok: boolean }>(`/api/runs/${encodeURIComponent(runId)}`, { method: "DELETE" }),
