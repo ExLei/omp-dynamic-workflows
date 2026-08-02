@@ -166,14 +166,23 @@ export {
   isSafeSavedWorkflowName,
   saveLocationOptions,
 } from "./workflow-saved.js";
-export type { WorkflowSettings, WorkflowSettingsOptions, WorkflowSettingsStore } from "./workflow-settings.js";
+export type {
+  WebConsoleConfig,
+  WorkflowSettings,
+  WorkflowSettingsOptions,
+  WorkflowSettingsStore,
+} from "./workflow-settings.js";
 export {
   getWorkflowProjectSettingsPath,
   getWorkflowSettingsPath,
   loadWorkflowSettings,
+  resolveWebConsoleConfig,
   saveWorkflowSettings,
   saveWorkflowSettingsForCwd,
 } from "./workflow-settings.js";
+export type { WorkflowWebServer, WorkflowWebServerOptions } from "./web-server.js";
+export type { OutlineNode, WorkflowOutline } from "./web-outline.js";
+export { outlineWorkflowScript } from "./web-outline.js";
 export type { WorkflowToolInput, WorkflowToolOptions } from "./workflow-tool.js";
 export { backgroundStartedText, createWorkflowTool } from "./workflow-tool.js";
 export {

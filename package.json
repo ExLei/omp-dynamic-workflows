@@ -10,7 +10,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
-    "test": "bun test tests"
+    "test": "bun test tests",
+    "web:dev": "cd web && bun run dev",
+    "web:build": "cd web && bun run build",
+    "spike:web": "bun spike/web-standalone.ts"
   },
   "omp": {
     "extensions": [

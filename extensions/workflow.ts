@@ -21,7 +21,11 @@ import { createWorkflowControlTool } from "../src/workflow-control-tool.js";
 import { installWorkflowKeywordArming } from "../src/workflow-editor.js";
 import { WorkflowManager } from "../src/workflow-manager.js";
 import { createWorkflowStorage } from "../src/workflow-saved.js";
-import { loadWorkflowSettings, saveWorkflowSettingsForCwd } from "../src/workflow-settings.js";
+import {
+  loadWorkflowSettings,
+  resolveWebConsoleConfig,
+  saveWorkflowSettingsForCwd,
+} from "../src/workflow-settings.js";
 import { createWorkflowTool } from "../src/workflow-tool.js";
 import { registerWorkflowModelsCommand } from "../src/workflows-models-command.js";
 
@@ -75,7 +79,12 @@ export default function extension(pi: ExtensionAPI) {
   // Refresh the delivery holder immediately after claiming the manager. On a
   // reload handoff its listener survives, but Pi invalidates the old ExtensionAPI
   // before loading this generation.
-  installResultDelivery(pi, manager, { loadSettings: () => loadWorkflowSettings({ cwd }) });
+  installResultDelivery(pi, manager, {
+    loadSettings: () => loadWorkflowSettings({ cwd }),
+    // A run launched from the browser is recorded in the transcript but never
+    // starts a turn: clicking Run in a web UI must not wake the TUI's assistant.
+    isSilentOrigin: (runId) => webServer?.ownsRun(runId) ?? false,
+  });
 
   const workflowTool = createWorkflowTool({ cwd, manager, storage });
   const workflowControlTool = createWorkflowControlTool({ manager });
@@ -87,8 +96,12 @@ export default function extension(pi: ExtensionAPI) {
   // re-arms any run that was already paused-on-usage_limit before this process
   // started (cold start), so restarting pi doesn't strand a paused run.
   const usageLimitScheduler = new UsageLimitScheduler(manager);
+  /** Web console handle; started a macrotask after session_start when enabled. */
+  let webServer: { url: string; ownsRun(runId: string): boolean; stop(): void } | undefined;
   pi.on("session_shutdown", () => {
     usageLimitScheduler.dispose();
+    webServer?.stop();
+    webServer = undefined;
     // OMP's shutdown event intentionally has no Pi-style reason field. Keep
     // the runtime available for an in-process /reload handoff; process exit
     // naturally releases this process-local holder.
@@ -98,7 +111,14 @@ export default function extension(pi: ExtensionAPI) {
   // messages, like CC's ultracode. Shared with the editor's input hook below and
   // with the explicit /workflows run <prompt> manual trigger. It is part of the
   // reload handoff so /reload does not silently turn the selected effort off.
-  registerWorkflowCommands(pi, manager, { storage, cwd, effort });
+  registerWorkflowCommands(pi, manager, {
+    storage,
+    cwd,
+    effort,
+    // `/workflows web` reprints the tokenised URL; the session-start notify
+    // scrolls away and the token is not recoverable from anywhere else.
+    getWebConsoleUrl: () => webServer?.url,
+  });
   registerWorkflowModelsCommand(pi);
   registerBuiltinWorkflows(pi, { cwd, manager, storage });
   registerAllSavedWorkflows(pi, cwd, storage, manager);
@@ -149,5 +169,52 @@ export default function extension(pi: ExtensionAPI) {
       });
       armingInstalled = true;
     }
+    startWebConsole(ctx);
   });
+
+  /**
+   * Local web console, on unless `web.enabled: false`.
+   *
+   * Cost discipline (measured on this machine): the module graph adds ~3ms and
+   * the loopback bind ~0.5ms, against ~2.9s of omp launch — A/B on `omp -p ""`
+   * shows no difference outside run-to-run noise. Two rules keep it that way:
+   *
+   *  1. Dynamic `import()`, never awaited, and deferred a macrotask past
+   *     session_start so nothing sits in front of the TUI's first paint.
+   *  2. Nothing eager inside the server — the React asset root is stat'd on the
+   *     first browser request, not at bind time.
+   *
+   * tests/web-startup-budget.test.ts pins the module graph so a future import
+   * can't quietly drag the ~1.4s `@oh-my-pi/pi-coding-agent` evaluation back in.
+   */
+  function startWebConsole(ctx: ExtensionContext): void {
+    if (webServer) return;
+    const { enabled, port, announce, open } = resolveWebConsoleConfig(loadWorkflowSettings({ cwd }));
+    if (!enabled) return;
+
+    setTimeout(() => {
+      if (webServer) return;
+      void import("../src/web-server.js")
+        .then(async ({ startWorkflowWebServer }) => {
+          const server = startWorkflowWebServer({
+            manager,
+            storage,
+            cwd,
+            port,
+            token: process.env.OMP_WORKFLOW_WEB_TOKEN,
+          });
+          webServer = server;
+          // Name the command in the same breath as the URL: the notice scrolls
+          // away, and the URL's token is not recoverable from anywhere else.
+          if (announce) ctx.ui.notify(`Workflow web console: ${server.url}  (/workflows web to open)`, "info");
+          if (!open) return;
+          const { openInBrowser } = await import("../src/web-open.js");
+          const opened = await openInBrowser(server.url);
+          if (!opened.ok) ctx.ui.notify(`Could not open a browser (${opened.reason}) — use /workflows web.`, "warning");
+        })
+        .catch((error: unknown) => {
+          ctx.ui.notify(`Workflow web console failed to start: ${String(error)}`, "error");
+        });
+    }, 0).unref?.();
+  }
 }

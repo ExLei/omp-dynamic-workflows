@@ -1,0 +1,69 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+@theme {
+  --color-ink-950: #0b0f14;
+  --color-ink-900: #0d1117;
+  --color-ink-850: #131a22;
+  --color-ink-800: #151b23;
+  --color-ink-700: #1c232c;
+  --color-ink-600: #2b333d;
+  --color-ink-300: #8b97a4;
+  --color-ink-100: #d7dee6;
+  --color-accent: #58a6ff;
+  --color-ok: #3fb950;
+  --color-busy: #d29922;
+  --color-bad: #f85149;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ink-900);
+  color: var(--color-ink-100);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-600);
+  border-radius: 4px;
+}
+
+/* React Flow surface tuned to the app palette. */
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__node {
+  font-family: inherit;
+}
+
+/* CodeMirror ships an auto-height editor; force it to fill the flex slot so the
+   gutter and click target cover the whole pane instead of stopping after the
+   last line. */
+.cm-theme-dark,
+.cm-theme-dark > .cm-editor {
+  height: 100%;
+}
+.cm-theme-dark .cm-scroller {
+  overflow: auto;
+}
+.cm-theme-dark .cm-gutters {
+  background: var(--color-ink-950);
+  border-right: 1px solid var(--color-ink-600);
+}
+.cm-theme-dark .cm-editor {
+  background: var(--color-ink-950);
+}
+.cm-theme-dark .cm-editor.cm-focused {
+  outline: none;
+}

@@ -154,12 +154,25 @@ function deliveredMaxChars(opts: { loadSettings?: () => WorkflowSettings }): num
 export function installResultDelivery(
   pi: ExtensionAPI,
   manager: WorkflowManager,
-  opts: { loadSettings?: () => WorkflowSettings } = {},
+  opts: {
+    loadSettings?: () => WorkflowSettings;
+    /**
+     * Runs the user launched somewhere other than this conversation (today: the
+     * web console). Their outcome is still written into the transcript so the
+     * next turn has the context, but it must not `triggerTurn` — clicking Run in
+     * a browser has no business waking the assistant and spending a turn.
+     */
+     isSilentOrigin?: (runId: string) => boolean;
+  } = {},
 ): void {
   // Mutable holder on the manager shared by extension generations across /reload.
   const m = manager as unknown as {
     __deliveryInstalled?: boolean;
-    __holder?: { pi: ExtensionAPI; loadSettings?: () => WorkflowSettings };
+    __holder?: {
+      pi: ExtensionAPI;
+      loadSettings?: () => WorkflowSettings;
+      isSilentOrigin?: (runId: string) => boolean;
+    };
   };
   if (m.__deliveryInstalled) {
     // The manager and listeners survive /reload. Refresh every generation-bound
@@ -167,11 +180,15 @@ export function installResultDelivery(
     if (m.__holder) {
       m.__holder.pi = pi;
       m.__holder.loadSettings = opts.loadSettings;
+      m.__holder.isSilentOrigin = opts.isSilentOrigin;
     }
     return;
   }
   m.__deliveryInstalled = true;
-  m.__holder = { pi, loadSettings: opts.loadSettings };
+  m.__holder = { pi, loadSettings: opts.loadSettings, isSilentOrigin: opts.isSilentOrigin };
+
+  /** A run started outside this conversation is recorded, never acted on. */
+  const wakesTurn = (runId: string): boolean => !m.__holder?.isSilentOrigin?.(runId);
 
   const deliver = (content: string, delivery: { triggerTurn?: boolean } = {}) => {
     try {
@@ -198,12 +215,15 @@ export function installResultDelivery(
           resultPath: persistedResultPath(manager, runId),
           maxChars: deliveredMaxChars({ loadSettings: m.__holder?.loadSettings }),
         }),
+        { triggerTurn: wakesTurn(runId) },
       );
     }
   });
   manager.on("error", ({ runId, error }: { runId: string; error?: { message?: string } }) => {
     if (!manager.getRun(runId)?.background) return;
-    deliver(`✗ Background workflow ${runId} failed: ${error?.message ?? "unknown error"}`);
+    deliver(`✗ Background workflow ${runId} failed: ${error?.message ?? "unknown error"}`, {
+      triggerTurn: wakesTurn(runId),
+    });
   });
   // A hand-stopped run is not a failure and must not wake the orchestrator: the
   // user already saw the navigator's "Stopped <id>" notice. Record it in the

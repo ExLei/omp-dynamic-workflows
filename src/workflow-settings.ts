@@ -49,6 +49,29 @@ export interface WorkflowSettings {
    * tool) so a subagent can't fan out through them.
    */
   excludeSubagentTools?: string[];
+  /**
+   * Local web console (see src/web-server.ts). On by default: the marginal
+   * startup cost is ~3ms (module eval + loopback bind), which is inside the
+   * noise of omp's own launch, and the server shares the live WorkflowManager
+   * so the browser and the TUI navigator show the same runs.
+   *
+   * It still executes arbitrary workflow JS on request, so it binds loopback
+   * only and mints a per-process token. Set `enabled: false` to turn it off.
+   */
+  web?: {
+    enabled?: boolean;
+    /** Fixed port; omitted picks an ephemeral one. */
+    port?: number;
+    /** Print the console URL on session start (default true). */
+    announce?: boolean;
+    /**
+     * Open the console in the default browser when the session starts.
+     * Default false: auto-launching a browser on every `omp` in every repo is
+     * hostile, and it is plain wrong over SSH. `/workflows web` opens it on
+     * demand instead.
+     */
+    open?: boolean;
+  };
 }
 
 export interface WorkflowSettingsStore {
@@ -65,6 +88,43 @@ export interface WorkflowSettingsOptions {
   projectSettingsPath?: string;
   /** Save destination when using saveWorkflowSettings with cwd. Default: global. */
   scope?: "global" | "project";
+}
+
+/** Resolved launch decision for the web console. */
+export interface WebConsoleConfig {
+  enabled: boolean;
+  /** 0 asks the OS for an ephemeral port. */
+  port: number;
+  announce: boolean;
+  /** Launch the default browser once the console is up. */
+  open: boolean;
+}
+
+/**
+ * Decide whether (and where) to start the web console.
+ *
+ * Precedence: `OMP_WORKFLOW_WEB` wins over settings, because it is what a user
+ * reaches for to flip the behaviour of one launch. `0`/`false`/`off` disable;
+ * an integer above 1 pins that port; anything else (`1`, `true`, empty) just
+ * enables with an ephemeral port. Absent the variable, the console is on unless
+ * `web.enabled` is explicitly false — see the cost note on WorkflowSettings.web.
+ */
+export function resolveWebConsoleConfig(
+  settings: WorkflowSettings,
+  env: Record<string, string | undefined> = process.env,
+): WebConsoleConfig {
+  const web = settings.web ?? {};
+  const announce = web.announce !== false;
+  const open = web.open === true;
+  const override = env.OMP_WORKFLOW_WEB;
+  if (override === undefined) {
+    return { enabled: web.enabled !== false, port: web.port ?? 0, announce, open };
+  }
+  const flag = override.trim().toLowerCase();
+  if (flag === "0" || flag === "false" || flag === "off") return { enabled: false, port: 0, announce, open };
+  const pinned = Number(flag);
+  const port = Number.isInteger(pinned) && pinned > 1 && pinned <= 65_535 ? pinned : (web.port ?? 0);
+  return { enabled: true, port, announce, open };
 }
 
 /** Path to the user-level workflow settings JSON file (~/.omp/workflows/settings.json). */
@@ -175,7 +235,21 @@ function normalizeSettings(value: unknown): WorkflowSettings {
     const names = raw.excludeSubagentTools.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
     if (names.length) settings.excludeSubagentTools = names;
   }
+  const web = normalizeWebSettings(raw.web);
+  if (web) settings.web = web;
   return settings;
+}
+
+function normalizeWebSettings(value: unknown): WorkflowSettings["web"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const web: NonNullable<WorkflowSettings["web"]> = {};
+  if (typeof raw.enabled === "boolean") web.enabled = raw.enabled;
+  if (typeof raw.announce === "boolean") web.announce = raw.announce;
+  if (typeof raw.open === "boolean") web.open = raw.open;
+  const port = normalizeInteger(raw.port, 1, 65_535);
+  if (port !== undefined) web.port = port;
+  return Object.keys(web).length > 0 ? web : undefined;
 }
 
 function normalizeInteger(value: unknown, min: number, max: number): number | undefined {

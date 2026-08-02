@@ -160,6 +160,8 @@ export interface WorkflowCommandOptions {
   cwd?: string;
   /** Standing effort mode; when high/ultra, `/workflows run` carries its directive too. */
   effort?: EffortState;
+  /** Live web console URL, when the console is running. Enables `/workflows web`. */
+  getWebConsoleUrl?: () => string | undefined;
 }
 
 /** Register the `/workflows` command against the shared manager. Idempotent. */
@@ -177,7 +179,7 @@ export function registerWorkflowCommands(
 
   pi.registerCommand("workflows", {
     description:
-      "Manage workflow runs — no args (opens navigator) | run <prompt> | status/stop/pause/resume <id> | rm <id> | save <name> [runId] [project|user]",
+      "Manage workflow runs — no args (opens navigator) | run <prompt> | status/stop/pause/resume <id> | rm <id> | save <name> [runId] [project|user] | web [url]",
     async handler(args: string, ctx: ExtensionCommandContext) {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const sub = (parts[0] ?? "list").toLowerCase();
@@ -219,6 +221,26 @@ export function registerWorkflowCommands(
           } catch {
             ctx.ui.notify("Could not start the workflow turn.", "error");
           }
+          return;
+        }
+        // `/workflows web` opens the console; `/workflows web url` only prints it
+        // (SSH, or when you want to paste the URL into another machine's browser).
+        case "web": {
+          const url = opts.getWebConsoleUrl?.();
+          if (!url) {
+            ctx.ui.notify(
+              'Web console is not running. Set {"web":{"enabled":true}} in ~/.omp/workflows/settings.json, or run with OMP_WORKFLOW_WEB=1.',
+              "warning",
+            );
+            return;
+          }
+          // Always print: the URL carries the per-process token, and a transient
+          // notify is not something the user can scroll back to.
+          await print(`Workflow web console: ${url}`);
+          if ((parts[1] ?? "").toLowerCase() === "url") return;
+          const { openInBrowser } = await import("./web-open.js");
+          const opened = await openInBrowser(url);
+          if (!opened.ok) ctx.ui.notify(`Could not open a browser (${opened.reason}) — use the URL above.`, "warning");
           return;
         }
         case "ui":
