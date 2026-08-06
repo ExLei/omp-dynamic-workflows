@@ -94,7 +94,11 @@ describe("resolveConsult", () => {
         index: 0,
         runId,
         hash: hashConsult("q", { to: "agent" }),
-        result: { applied: false, summary: "维持原脚本" },
+        result: {
+          applied: true,
+          revisedScript: CONSULT_THEN_AGENT_SCRIPT,
+          summary: "应用了用户提供的脚本",
+        },
       });
       // pendingConsult cleared in memory and on disk.
       expect(manager.getRun(runId)?.pendingConsult).toBeUndefined();
@@ -201,7 +205,11 @@ describe("resolveConsult", () => {
         index: 0,
         runId,
         hash: hashConsult("q", { to: "agent" }),
-        result: { applied: false, summary: "维持原脚本" },
+        result: {
+          applied: true,
+          revisedScript: CONSULT_THEN_AGENT_SCRIPT,
+          summary: "应用了用户提供的脚本",
+        },
       });
       expect(persisted?.pendingConsult).toBeUndefined();
 

@@ -449,7 +449,7 @@ export function fmtElapsed(ms: number): string {
  */
 export function renderPanel(manager: WorkflowManager, theme: Theme, width?: number, now = Date.now()): string[] {
   const all = manager.listRuns();
-  const active = all.filter((r) => r.status === "running" || r.status === "paused");
+  const active = all.filter((r) => r.status === "running" || r.status === "paused" || r.status === "waiting_consult");
   if (!active.length) return [];
   const dim = (t: string) => theme.fg("dim", t);
   const ascii = isAscii(theme);
@@ -477,7 +477,7 @@ export function renderPanel(manager: WorkflowManager, theme: Theme, width?: numb
   });
   // Finished runs leave this live panel but are kept in the navigator. Tell the
   // user so a completed run doesn't look like it vanished.
-  const finished = all.filter((r) => r.status !== "running" && r.status !== "paused").length;
+  const finished = all.filter((r) => r.status !== "running" && r.status !== "paused" && r.status !== "waiting_consult").length;
   const hint = dim(finished > 0 ? `/workflows — open navigator · ${finished} finished` : "/workflows — open navigator");
   return [...rows, hint].map((line) => fitLine(line, width));
 }
@@ -597,7 +597,7 @@ export function renderPanelDetailed(
   now: number,
 ): string[] {
   const all = manager.listRuns();
-  const active = all.filter((r) => r.status === "running" || r.status === "paused");
+  const active = all.filter((r) => r.status === "running" || r.status === "paused" || r.status === "waiting_consult");
   if (!active.length) return [];
   const dim = (t: string) => theme.fg("dim", t);
   const ascii = isAscii(theme);
@@ -644,7 +644,7 @@ export function renderPanelDetailed(
     if (snap) out.push(...renderRunBody(snap, agents, maxAgents, theme));
   }
 
-  const finished = all.filter((r) => r.status !== "running" && r.status !== "paused").length;
+  const finished = all.filter((r) => r.status !== "running" && r.status !== "paused" && r.status !== "waiting_consult").length;
   out.push(dim(finished > 0 ? `/workflows — open navigator · ${finished} finished` : "/workflows — open navigator"));
   return out.map((line) => fitLine(line, width));
 }
@@ -678,7 +678,8 @@ export function installTaskPanel(
     }
     return cached;
   };
-  const hasActiveRun = () => manager.listRuns().some((r) => r.status === "running" || r.status === "paused");
+  const hasActiveRun = () =>
+    manager.listRuns().some((r) => r.status === "running" || r.status === "paused" || r.status === "waiting_consult");
 
   ui.setWidget(
     "workflow-tasks",

@@ -81,9 +81,12 @@ type ReviewFailureKind = "reject" | "nofile" | "parse" | "error";
  * built from the pending consult at resolution time. A "confirm"-apply consult
  * adopts the review's revised script; an auto-apply consult whose chain
  * APPLIED a revision (resolveConsult received the chain's `summary` marker)
- * reports applied:true with the applied revised script; every other shape
- * (to:"main" replies, user replies, auto-apply over-limit fallbacks) continues
- * with the original script — "维持原脚本继续" (spec §4). resolveConsult merges
+ * reports applied:true with the applied revised script; a reply carrying a
+ * user script (to:"main" consults — whose chain never starts — and auto-apply
+ * in-flight/failed/over-limit fallbacks) also reports applied:true with that
+ * script, since the tool labels it "应用了脚本" and the run resumes with it;
+ * only a bare reply with neither a chain summary nor a script continues with
+ * the original script — "维持原脚本继续" (spec §4). resolveConsult merges
  * the review chain's summary into the pending consult when it builds this
  * outcome; the revisedScript is what a confirm flow stored on the pending
  * consult (absent for user replies, which carry their edit as resolveConsult's
@@ -91,14 +94,39 @@ type ReviewFailureKind = "reject" | "nofile" | "parse" | "error";
  */
 function buildConsultOutcome(pending: PendingConsult, script?: string): ConsultOutcome {
   if (pending.opts.apply === "confirm") {
-    return { applied: true, revisedScript: pending.revisedScript, summary: pending.summary ?? "" };
+    // 角落 3（复检 B）：confirm 建议未就绪（链尚未 consult-review-ready / 链失败）
+    // 时 pending.revisedScript 缺失——不得 journal 落 {applied:true,
+    // revisedScript:undefined}（标签与事实、journal 与事实双矛盾）。
+    //
+    // 复检重要 1（双审查独立确认）：confirm 兜底不得忽略 script 参数——建议未就绪
+    // 时带脚本 reply（工具已报 applied/「应用了脚本」，run 以用户脚本恢复）必须如实
+    // 落 {applied:true, revisedScript: script}；9ec2779 把 dd7c724 的
+    // {applied:true, revisedScript:undefined} 改成无条件维持原脚本的形态即此回归
+    // （标签与 journal、journal 与事实双矛盾）。镜像非 confirm 分支的
+    // `script ?? pending.revisedScript` 优先级：script 提供 → 用户脚本；
+    // 仅 revisedScript 就绪 → 采纳建议；两者皆缺 → 维持原脚本。
+    if (script !== undefined) {
+      return { applied: true, revisedScript: script, summary: "应用了用户提供的脚本" };
+    }
+    return pending.revisedScript !== undefined
+      ? { applied: true, revisedScript: pending.revisedScript, summary: pending.summary ?? "" }
+      : { applied: false, summary: "维持原脚本" };
   }
   // 链已应用（resolveConsult 收到 summary 标记）：修订脚本真实生效——outcome 如实
   // 报 applied:true 并携带链摘要与已应用脚本（双审查重要 2：auto 应用后不得再报
   // applied:false/维持原脚本，ConsultOutcome.applied 自身 doc 说「Whether the
-  // review's revised script was applied」）。
+  // review's revised script was applied」）。summary 分支保持在 script 之前：
+  // applyReviewChain 同时携带修订脚本与链摘要，链应用路径必须保留链摘要（既有契约）。
   if (pending.summary !== undefined) {
     return { applied: true, summary: pending.summary, revisedScript: script ?? pending.revisedScript };
+  }
+  // 带脚本 reply（无链摘要——to:"main" 咨询永不启动审阅链，auto 链在飞/失败/超限
+  // 回落时同理）：resolveConsult 以用户脚本恢复，工具已报 applied/「应用了脚本」，
+  // journal 必须如实落 {applied:true, revisedScript: script}——镜像 confirm 分支
+  // 语义，修复此前无条件落 applied:false/维持原脚本（标签 vs journal、journal vs
+  // 事实双矛盾；且与 confirm 分支 script → applied:true 直接冲突）。
+  if (script !== undefined) {
+    return { applied: true, revisedScript: script, summary: "应用了用户提供的脚本" };
   }
   return { applied: false, summary: "维持原脚本" };
 }
@@ -1580,6 +1608,15 @@ export class WorkflowManager extends EventEmitter {
    * (applyReviewChain drops it). The pending opts are never rewritten: they
    * ARE the hash identity resolveConsult journals and replay recomputes, so
    * rewriting them would silently discard the answer (replay miss → re-pend).
+   * The memory fresh-park branch emits "consult-pending" (to:"main" delivery
+   * override) right after persistRun — the delivery layer routes on to ?? opts.to
+   * and wakes the main agent, closing the intervene→reply loop that was a silent
+   * dead end when the catch tail alone was the only emission point (its abort
+   * path is excluded by the `!aborted` consultPending guard). The memory
+   * re-target branch emits only when the original delivery was suppressed
+   * (to:"agent" and non-confirm — see the branch comment): shapes already
+   * delivered at park (to:"main", confirm-exempt to:"agent", to-缺省) must not
+   * be re-sent, or the main agent receives the same consult message twice.
    * Returns false when the run is not in a reachable state.
    */
   intervene(runId: string): boolean {
@@ -1593,6 +1630,19 @@ export class WorkflowManager extends EventEmitter {
           generation: (managed.pendingConsult?.generation ?? 0) + 1,
         };
         this.persistRun(managed);
+        // 重要 1（任务 5 复检）：intervene 投递闭环——persist 后发射
+        // consult-pending（to:"main" 投递覆盖）。此前全仓库 consult-pending 唯一
+        // 发射点在 catch 尾（intervene 的 abort 路径被 `!aborted` 排除），主代理
+        // 收不到任何消息/唤醒，intervene→reply 回路静默死端。投递层按 to ?? opts.to
+        // 分流 + wakesTurn 判定，发射即闭环。abort 后 catch 尾的 consultPending
+        // 判定为 false（!aborted 不成立），不会重复发射。
+        const pending = managed.pendingConsult;
+        this.emitLive(managed, "consult-pending", {
+          runId: managed.runId,
+          prompt: pending.prompt,
+          opts: pending.opts,
+          to: "main",
+        });
         // After persist — the catch tail keeps the waiting_consult status we
         // just set (its abort branch only overwrites "running").
         managed.controller.abort();
@@ -1613,6 +1663,29 @@ export class WorkflowManager extends EventEmitter {
           generation: existing.generation + 1,
         };
         this.persistRun(managed);
+        // 重要 1（任务 5 复检）：改投分支补投递事件——携带 to:"main" 覆盖字段
+        // （投递层读 to ?? opts.to 分流）。原投递被抑制的 to:"agent" 咨询（自动审阅
+        // 链自治）在此刻才真正送达主代理，人工答复回路由此闭环。
+        //
+        // 复检重要 2（复检 A）：投递层无去重，去重必须落在守卫侧——有效投递目标取
+        // `to ?? opts.to`，而 park 即已投递的形状不止 to:"main"：confirm 豁免抑制的
+        // to:"agent"（task-panel 抑制条件 `(to ?? opts.to) === "agent" && apply !==
+        // "confirm"`）与 to 缺省（(undefined ?? undefined) !== "agent"）在 park 时都
+        // 已送达主代理。旧守卫仅 `target !== "main"` 漏判这两种形状、改投时再次发射
+        // ——主代理重复收到同一条咨询消息（旧 ⑬ 在 park 后注册监听器才令「恰一次」
+        // 断言失明）。新守卫取投递层抑制条件的**取反**：仅原投递确被抑制
+        // （to:"agent" 且非 confirm）时补发射；其余（to 缺省、confirm、main）跳过。
+        // generation+1 与陈旧链失效语义照常保留。
+        const suppressed = (existing.to ?? existing.opts.to) === "agent" && existing.opts.apply !== "confirm";
+        if (suppressed) {
+          const pending = managed.pendingConsult;
+          this.emitLive(managed, "consult-pending", {
+            runId: managed.runId,
+            prompt: pending.prompt,
+            opts: pending.opts,
+            to: "main",
+          });
+        }
         return true;
       }
       return false;

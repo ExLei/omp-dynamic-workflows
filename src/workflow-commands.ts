@@ -32,6 +32,7 @@ const STATUS_ICON: Record<string, string> = {
   pending: "·",
   running: "◆",
   paused: "⏸",
+  waiting_consult: "⏸",
   completed: "✓",
   failed: "✗",
   aborted: "⊘",
