@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { AgentUsage } from "./agent.js";
 import type { AgentHistoryEntry } from "./agent-history.js";
 import type { WorkflowErrorCode } from "./errors.js";
+import type { ConsultOptions } from "./workflow.js";
 import {
   ensureDir as ensureDirFs,
   listJsonFilesSafe,
@@ -42,6 +43,26 @@ export interface PersistedAgentState {
   tokenUsage?: AgentUsage;
   /** The model this agent ran on (provider/id), when known. */
   model?: string;
+}
+
+/**
+ * The pending consult() intervention point a run is parked on (status
+ * "waiting_consult"), written by the manager's executeRun catch tail when a
+ * CONSULT_PENDING error surfaces. resolveConsult fills revisedScript/summary
+ * and bumps generation before the run is resumed; resume() rehydrates it onto
+ * the ManagedRun so the continuation knows what it is answering. Persisted so
+ * a waiting_consult run survives a cold restart (the user's answer must not
+ * be lost with the process). Shared by PersistedRunState and ManagedRun so
+ * the two shapes cannot drift.
+ */
+export interface PendingConsult {
+  journalPrefix: string;
+  callIndex: number;
+  prompt: string;
+  opts: ConsultOptions;
+  revisedScript?: string;
+  summary?: string;
+  generation: number;
 }
 
 export interface PersistedRunState {
@@ -142,6 +163,16 @@ export interface PersistedRunState {
    * auto-resume attempt has been recorded yet.
    */
   autoResumeAttempts?: number;
+  /** The pending consult intervention point (see PendingConsult). */
+  pendingConsult?: PendingConsult;
+  /**
+   * How many times this run's consult outcome has been applied automatically
+   * (apply: "auto" — no user confirmation). Run-level counter, owned and
+   * incremented by the manager's resolveConsult — mirrors the
+   * autoResumeAttempts ownership pattern (persisted by whoever mutates it by
+   * load-modify-save, not by the generic writeRunToDisk save path).
+   */
+  consultAutoApplied?: number;
 }
 
 export interface RunPersistence {

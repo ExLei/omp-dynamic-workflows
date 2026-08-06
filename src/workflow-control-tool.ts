@@ -203,6 +203,8 @@ function allowedActions(status: RunStatus): string[] {
     case "failed":
     case "pending":
       return ["status", "resume"];
+    case "waiting_consult":
+      return ["status", "stop", "reply", "intervene"];
     case "completed":
     case "aborted":
       return ["status"];

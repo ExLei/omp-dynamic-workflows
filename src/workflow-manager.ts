@@ -10,12 +10,36 @@ import { isProviderUsageLimit, WorkflowError, WorkflowErrorCode } from "./errors
 import {
   createRunPersistence,
   generateRunId,
+  type PendingConsult,
   type PersistedRunState,
   type RunLease,
   type RunPersistence,
   type RunStatus,
 } from "./run-persistence.js";
-import { type JournalEntry, parseWorkflowScript, runWorkflow, type WorkflowRunResult } from "./workflow.js";
+import { type ConsultOptions, type JournalEntry, parseWorkflowScript, runWorkflow, type WorkflowRunResult } from "./workflow.js";
+
+/**
+ * True when a CONSULT_PENDING payload carries the full waiting_consult
+ * identity. consult()'s contract guarantees a complete payload; a
+ * CONSULT_PENDING raised by any other path has no such guarantee, and parking
+ * on a degenerate identity (empty journalPrefix) would make task 3's
+ * hashConsult recompute from nothing — the user's reply would never match the
+ * call it answers. Malformed payloads therefore fail loudly (failed + error
+ * event) instead of silently degrading into a waiting_consult run.
+ */
+function isConsultPendingPayload(
+  payload: unknown,
+): payload is { journalPrefix: string; callIndex: number; prompt: string; opts: ConsultOptions } {
+  if (typeof payload !== "object" || payload === null) return false;
+  const p = payload as Record<string, unknown>;
+  return (
+    typeof p.journalPrefix === "string" &&
+    typeof p.callIndex === "number" &&
+    typeof p.prompt === "string" &&
+    typeof p.opts === "object" &&
+    p.opts !== null
+  );
+}
 
 export interface ManagedRun {
   runId: string;
@@ -23,6 +47,16 @@ export interface ManagedRun {
   snapshot: WorkflowSnapshot;
   result?: WorkflowRunResult;
   error?: WorkflowError;
+  /**
+   * The pending consult() intervention point this run is parked on (status
+   * "waiting_consult"). Written once by executeRun's catch tail when a
+   * CONSULT_PENDING error surfaces (generation 0; fields taken from the
+   * error's payload). resolveConsult (later task) fills revisedScript/
+   * summary and bumps generation before resuming. Persisted with the run so
+   * a waiting_consult run survives a cold restart. Shape shared with
+   * PersistedRunState via run-persistence's PendingConsult.
+   */
+  pendingConsult?: PendingConsult;
   controller: AbortController;
   startedAt: Date;
   /** The real script, kept so the run can be resumed. */
@@ -845,10 +879,40 @@ export class WorkflowManager extends EventEmitter {
             );
 
       const usageLimitPaused = !managed.controller.signal.aborted && isProviderUsageLimit(workflowError);
+      // A consult() intervention point was reached (the script is parked for
+      // review, not failed). Mutually exclusive with the abort branch: an
+      // intentional stop/pause always wins over a consult pause. The payload
+      // must carry the full waiting_consult identity — consult()'s contract
+      // guarantees it, but a CONSULT_PENDING raised by any other path has no
+      // such guarantee; a malformed one fails loudly below (failed + error
+      // event) instead of silently parking on an empty identity.
+      const consultPending =
+        !managed.controller.signal.aborted &&
+        workflowError.code === WorkflowErrorCode.CONSULT_PENDING &&
+        isConsultPendingPayload(workflowError.payload);
       if (managed.controller.signal.aborted) {
         // Intentional abort (pause/stop/Esc) — preserve status set by pause()/stop()
         if (managed.status === "running") {
           managed.status = "aborted";
+        }
+      } else if (consultPending) {
+        // Consult review gate: checkpoint the run as waiting_consult with the
+        // pending intervention point recorded, so resolveConsult (later task)
+        // can answer it and resume. Only when the run is still "running" — a
+        // stop() that landed in this window already set "aborted" and must not
+        // be overwritten.
+        // consultPending already guarantees the payload passed
+        // isConsultPendingPayload() — the guard re-run here is what narrows
+        // workflowError.payload to the non-null shape for TS.
+        if (managed.status === "running" && isConsultPendingPayload(workflowError.payload)) {
+          managed.status = "waiting_consult";
+          managed.pendingConsult = {
+            journalPrefix: workflowError.payload.journalPrefix,
+            callIndex: workflowError.payload.callIndex,
+            prompt: workflowError.payload.prompt,
+            opts: workflowError.payload.opts,
+            generation: 0,
+          };
         }
       } else if (usageLimitPaused) {
         // Provider quota/usage limit: NOT a failure. Checkpoint the run as paused so
@@ -868,6 +932,16 @@ export class WorkflowManager extends EventEmitter {
           error: workflowError,
           resetHint: workflowError.resetHint,
         });
+      } else if (consultPending) {
+        // Consult review gate — a pause for review, NOT a failure. Only the
+        // consult-pending notice fires; emitting "error" here would make the
+        // delivery layer misreport the consultation as a failed run.
+        if (managed.status === "waiting_consult") {
+          this.emitLive(managed, "consult-pending", {
+            runId: managed.runId,
+            prompt: managed.pendingConsult?.prompt,
+          });
+        }
       } else if (managed.controller.signal.aborted) {
         // Deliberate stop/pause/delete. The abort rejection is the MECHANISM of
         // the user's own request, not a failure to report: stop()/pause() have
@@ -1096,6 +1170,10 @@ export class WorkflowManager extends EventEmitter {
         sessionId: this.sessionId,
         journal: keepsResumeJournal ? managed.journal : undefined,
         status: managed.status,
+        // The pending consult (waiting_consult runs) — persisted so the
+        // intervention point survives a cold restart and resume() rehydrates
+        // it onto the ManagedRun (see PersistedRunState.pendingConsult).
+        pendingConsult: managed.pendingConsult,
         // Persisted every write (not just at pause) so a stale read during the
         // "paused" event race (see UsageLimitScheduler) is still correct — this
         // is fixed at run-start and doesn't change over the run's lifetime.
@@ -1184,14 +1262,25 @@ export class WorkflowManager extends EventEmitter {
    * only when provided; otherwise the persisted args are kept.
    */
   async resume(runId: string, opts?: { script?: string; args?: unknown }): Promise<boolean> {
-    // Guard: refuse to resume a run that is already running, or one that was
-    // intentionally aborted (pause/stop/Esc). Paused and failed runs can restart.
+    // Guard: refuse to resume a run that is already running, one that was
+    // intentionally aborted (pause/stop/Esc), or one parked on a pending
+    // consult (waiting_consult — only resolveConsult may release it, by
+    // flipping the status to paused first; see the stop() doc comment's
+    // waiting_consult notes). Paused and failed runs can restart.
     const active = this.runs.get(runId);
     if (active?.status === "running") return false;
     if (active?.status === "aborted") return false;
+    if (active?.status === "waiting_consult") return false;
 
     const persisted = this.persistence.load(runId);
-    if (!persisted?.script || persisted.status === "completed" || persisted.status === "aborted") return false;
+    if (
+      !persisted?.script ||
+      persisted.status === "completed" ||
+      persisted.status === "aborted" ||
+      persisted.status === "waiting_consult"
+    ) {
+      return false;
+    }
     const lease = this.persistence.acquireRunLease(runId);
     if (!lease) return false;
 
@@ -1239,6 +1328,11 @@ export class WorkflowManager extends EventEmitter {
       script,
       args,
       journal: persisted.journal ?? [],
+      // The pending consult, when this run was parked on one (resolveConsult
+      // flips the status to paused before resuming, so the persisted
+      // pendingConsult is what tells the continuation which intervention
+      // point it is answering and what outcome was recorded).
+      pendingConsult: persisted.pendingConsult,
       background: true,
       lease,
       // Carry the original opt-out forward across resumes; it's fixed at
@@ -1316,7 +1410,8 @@ export class WorkflowManager extends EventEmitter {
    *
    * Fast path: the run is live in this process (`this.runs`) — abort its
    * controller and persist "aborted" as before. Fallback: the run is not in
-   * memory but is persisted as "running" or "paused" — e.g. it belongs to a
+   * memory but is persisted as "running", "paused", or "waiting_consult" —
+   * e.g. it belongs to a
    * prior pi session that this process's recoverStaleRuns() flipped to
    * "paused" on disk without repopulating this.runs (see workflow-control-tool's
    * findRun(), which resolves candidates from disk via listRuns()). There is no
@@ -1327,14 +1422,24 @@ export class WorkflowManager extends EventEmitter {
   stop(runId: string): boolean {
     const managed = this.runs.get(runId);
     if (managed) {
-      if (managed.status !== "running" && managed.status !== "paused") return false;
+      if (
+        managed.status !== "running" &&
+        managed.status !== "paused" &&
+        managed.status !== "waiting_consult"
+      ) {
+        return false;
+      }
       // Whether this run's OWN executeRun() promise has already fully settled
       // matters for whether stop() itself must be the one to call
       // recordTerminalRun(): a usage-limit checkpoint runs executeRun()'s
       // catch tail to completion before "paused" is ever observable (it
       // deliberately skipped recordTerminalRun() then, since "paused" isn't
       // terminal) — so there is no FUTURE tail left that will ever call it
-      // for this managed object. A manual pause() sets "paused" while its
+      // for this managed object. The same holds for a waiting_consult run:
+      // its status only becomes observable AFTER the tail's catch block has
+      // run to completion (persist + lease release), so stop() stopping a
+      // waiting_consult run is the only settle that will ever mark it
+      // terminal. A manual pause() sets "paused" while its
       // cooperative abort may still be settling; in that narrow window the
       // tail later settles this object to "aborted" (terminal) and records a
       // SECOND time — a tolerated duplicate: recordTerminalRun() is
@@ -1349,9 +1454,14 @@ export class WorkflowManager extends EventEmitter {
       // abort. Without this, stopping an already-paused run left it in
       // `runs` forever (no future tail to mark it eviction-eligible) — a
       // small leak in exactly the class this manager otherwise bounds.
-      const hadNoPendingSettle = managed.status === "paused";
+      const hadNoPendingSettle = managed.status === "paused" || managed.status === "waiting_consult";
       managed.controller.abort();
       managed.status = "aborted";
+      // Spec §6: stop/rm explicitly clears the pending consult — an aborted
+      // run must not keep its intervention prompt (in memory or on disk;
+      // writeRunToDisk persists managed.pendingConsult verbatim, so clear
+      // before the persist below).
+      managed.pendingConsult = undefined;
       this.emit("stopped", { runId });
       this.persistRun(managed);
       this.releaseRunLease(managed);
@@ -1360,11 +1470,19 @@ export class WorkflowManager extends EventEmitter {
     }
 
     const persisted = this.persistence.load(runId);
-    if (!persisted || (persisted.status !== "running" && persisted.status !== "paused")) return false;
+    if (
+      !persisted ||
+      (persisted.status !== "running" && persisted.status !== "paused" && persisted.status !== "waiting_consult")
+    ) {
+      return false;
+    }
     const lease = this.persistence.acquireRunLease(runId);
     if (!lease) return false;
     try {
-      this.persistence.save({ ...persisted, status: "aborted", updatedAt: new Date().toISOString() });
+      // Spec §6: stop/rm explicitly clears the pending consult — the spread
+      // would otherwise carry a waiting_consult prompt onto the aborted run
+      // on disk.
+      this.persistence.save({ ...persisted, status: "aborted", pendingConsult: undefined, updatedAt: new Date().toISOString() });
     } finally {
       this.persistence.releaseRunLease(lease);
     }

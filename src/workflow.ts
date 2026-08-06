@@ -1294,12 +1294,13 @@ export async function runWorkflow<T = unknown>(
     const journalKey = `${runId}:${callIndex}`;
     const cached = options.resumeJournal?.get(journalKey);
     if (cached != null && cached.hash === callHash && callIndex < state.firstMiss) {
-      shared.agentCount++;
       if ((cached.result as ConsultOutcome | undefined)?.settled === false) {
         // Unsettled review (failed, no answer): re-pend rather than replay.
         state.firstMiss = Math.min(state.firstMiss, callIndex);
       } else {
-        return cached.result; // replay the journaled review outcome
+        // Replay hit — count exactly once and return the journaled outcome.
+        shared.agentCount++;
+        return cached.result;
       }
     }
     if (cached == null || cached.hash !== callHash) state.firstMiss = Math.min(state.firstMiss, callIndex);
