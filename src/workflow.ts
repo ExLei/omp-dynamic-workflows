@@ -350,6 +350,34 @@ export interface CheckpointOptions {
   timeoutMs?: number;
 }
 
+/** Options for a consult() intervention point — a journaled, replayable review gate. */
+export interface ConsultOptions {
+  /** Who reviews the prompt: the in-run review subagent ("agent") or the main agent ("main"). Default "agent". */
+  to?: "agent" | "main";
+  /** Review subagent agentType name; omitted derives the default review agent. */
+  agent?: string;
+  /** "auto": apply the review's revised script directly; "confirm": confirm with the main agent first. Default "auto". */
+  apply?: "auto" | "confirm";
+  /** Per-consult timeout in ms for the review/reply. */
+  timeoutMs?: number;
+}
+
+/** The journaled outcome a resumed consult() returns (written by the manager's resolveConsult). */
+export interface ConsultOutcome {
+  /** Whether the review's revised script was applied. */
+  applied: boolean;
+  /** The reviewer's full revised script when the review produced one. */
+  revisedScript?: string;
+  /** Human-readable summary of the review. */
+  summary: string;
+  /**
+   * false when a review attempt failed without producing an answer — replay
+   * treats such an entry as a miss and re-pends the consult (markConsultFailed
+   * writes these; a settled consult omits the field).
+   */
+  settled?: boolean;
+}
+
 interface RuntimeState {
   currentPhase?: string;
   /**
@@ -1240,6 +1268,49 @@ export async function runWorkflow<T = unknown>(
     return reply;
   };
 
+  // Runtime intervention point: live execution throws CONSULT_PENDING (the run
+  // pauses into waiting_consult and a reviewer/manager produces a possibly
+  // revised script); on resume the journaled outcome replays by callIndex
+  // exactly like checkpoint(). One extra guard: an entry whose outcome has
+  // `settled: false` (a review attempt failed without an answer) is treated as
+  // a miss, so the consult re-pends instead of silently skipping past the
+  // review point.
+  //
+  // Deliberately NOT async: the throw must interrupt the script AT the consult
+  // line ("脚本执行到该行即中断"). An async consult() called without `await`
+  // (as every doc example writes it) would just start a promise that rejects
+  // unhandled while the script sails on — the run would resolve normally and
+  // never pause. The body has no await points anyway.
+  const consult = (promptText: string, consultOptions: ConsultOptions = {}) => {
+    throwIfAborted();
+    if (typeof promptText !== "string") throw new TypeError("consult(promptText, options?) needs a prompt string");
+    if (shared.agentCount >= maxAgents) {
+      throw agentLimitError();
+    }
+    const callIndex = state.callSeq++;
+    const callHash = hashConsult(promptText, consultOptions);
+    // Namespaced by runId like agent()/checkpoint() — nested frames carry their
+    // own runId (${runId}-nestedN), so the prefix is the frame's journal space.
+    const journalKey = `${runId}:${callIndex}`;
+    const cached = options.resumeJournal?.get(journalKey);
+    if (cached != null && cached.hash === callHash && callIndex < state.firstMiss) {
+      shared.agentCount++;
+      if ((cached.result as ConsultOutcome | undefined)?.settled === false) {
+        // Unsettled review (failed, no answer): re-pend rather than replay.
+        state.firstMiss = Math.min(state.firstMiss, callIndex);
+      } else {
+        return cached.result; // replay the journaled review outcome
+      }
+    }
+    if (cached == null || cached.hash !== callHash) state.firstMiss = Math.min(state.firstMiss, callIndex);
+    shared.agentCount++;
+    const payload = { journalPrefix: `${runId}:`, callIndex, prompt: promptText, opts: consultOptions };
+    throw new WorkflowError("consult pending: script paused for review", WorkflowErrorCode.CONSULT_PENDING, {
+      recoverable: false,
+      payload,
+    });
+  };
+
   const runtimeImplementations = {
     agent,
     parallel,
@@ -1252,6 +1323,7 @@ export async function runWorkflow<T = unknown>(
     retry,
     gate,
     checkpoint,
+    consult,
     log,
     phase,
     args: options.args,
@@ -1270,6 +1342,10 @@ export async function runWorkflow<T = unknown>(
   for (const diagnostic of bindingDiagnostics) logger.warn(diagnostic.message);
   const context = vm.createContext({
     ...projectGlobals,
+    // consult is a per-run closure like agent()/checkpoint(); it is injected
+    // directly until the capability contract declares it (task 8 adds the
+    // binding, at which point projectGlobals carries it too — same value).
+    consult,
     // Object/Array/JSON/Math/Date/Promise/Set/Map/etc. come from the vm realm
     // itself — we deliberately do NOT inject host built-ins, whose .constructor
     // would be the host Function (a determinism-guard bypass). Math/Date are
@@ -1528,6 +1604,26 @@ function hashCheckpoint(promptText: string, options: CheckpointOptions): string 
     choices: options.choices ?? null,
     default: options.default ?? null,
     headless: options.headless ?? "default",
+    timeoutMs: options.timeoutMs ?? null,
+  });
+  return createHash("sha256").update(identity).digest("hex");
+}
+
+/**
+ * Stable identity hash for a consult() call — a cache miss on resume when
+ * anything that could change its outcome changes. Same shape as
+ * hashCheckpoint: fixed field order + `?? null` normalization over the RAW
+ * options (no default resolution beyond the hash's own defaults, so the
+ * manager layer can recompute the identical hash from a persisted pendingConsult).
+ * Exported because the manager layer recomputes it when writing the journaled
+ * reply (a live consult never journals — it throws CONSULT_PENDING).
+ */
+export function hashConsult(promptText: string, options: ConsultOptions): string {
+  const identity = JSON.stringify({
+    promptText,
+    to: options.to ?? "agent",
+    agent: options.agent ?? null,
+    apply: options.apply ?? "auto",
     timeoutMs: options.timeoutMs ?? null,
   });
   return createHash("sha256").update(identity).digest("hex");

@@ -57,6 +57,13 @@ export enum WorkflowErrorCode {
   MODEL_NOT_FOUND = "MODEL_NOT_FOUND",
   /** Agent execution failed. */
   AGENT_EXECUTION_ERROR = "AGENT_EXECUTION_ERROR",
+  /**
+   * A consult() intervention point was reached: the script is paused for review
+   * (run status waiting_consult). recoverable:false — the run did not fail,
+   * it is waiting for a reviewer/manager to reply with a (possibly revised)
+   * script, which resumes it.
+   */
+  CONSULT_PENDING = "CONSULT_PENDING",
   /** Run state persistence failed. */
   PERSISTENCE_ERROR = "PERSISTENCE_ERROR",
   /** Unknown error. */
@@ -71,11 +78,23 @@ export class WorkflowError extends Error {
   readonly details?: unknown;
   /** For PROVIDER_USAGE_LIMIT: the provider's human reset hint, e.g. "Resets in ~3h" (verbatim). */
   readonly resetHint?: string;
+  /**
+   * VM-level identity carried by checkpoint/consult-style pauses (e.g.
+   * { journalPrefix, callIndex, prompt, opts } for CONSULT_PENDING) so the
+   * manager layer can journal a reply back under the same call key.
+   */
+  readonly payload?: unknown;
 
   constructor(
     message: string,
     code: WorkflowErrorCode,
-    options: { recoverable?: boolean; agentLabel?: string; details?: unknown; resetHint?: string } = {},
+    options: {
+      recoverable?: boolean;
+      agentLabel?: string;
+      details?: unknown;
+      resetHint?: string;
+      payload?: unknown;
+    } = {},
   ) {
     super(message);
     this.name = "WorkflowError";
@@ -84,6 +103,7 @@ export class WorkflowError extends Error {
     this.agentLabel = options.agentLabel;
     this.details = options.details;
     this.resetHint = options.resetHint;
+    this.payload = options.payload;
   }
 }
 

@@ -155,10 +155,13 @@ flowchart LR
 | `list` | `{ runs: [{ runId, workflowName, status, phase, counts{total,done,running,queued,error,skipped}, activeLabels, tokenTotal }] }` |
 | `status` | 单个运行的同结构摘要 |
 | `pause` / `resume` / `stop` | `{ result: "paused" \| "resumed" \| "stopped", run }` |
+| `reply { runId, script? }` | 答复 `waiting_consult` 运行：`script` 为修改后的完整脚本（省略=维持原脚本继续；`apply:"confirm"` 时省略=采纳审阅建议） |
+| `intervene { runId }` | 随时介入：暂停运行并把当前脚本与进度投递给主代理，等待 `reply` |
 
 出错时返回 `allowedActions`：`running` → status/pause/stop · `paused` → status/resume/stop ·
-`failed`/`pending` → status/resume · `completed`/`aborted` → status。手动停止落为 `stopped`/`aborted`，
-不会记成错误。
+`waiting_consult` → status/stop/reply/intervene · `failed`/`pending` → status/resume ·
+`completed`/`aborted` → status。手动停止落为 `stopped`/`aborted`，不会记成错误。`reply`/`intervene`
+按 runId 全局寻址（跨会话可回复）；`reply` 的 `script` 必须通过脚本解析校验，否则返回错误并保持等待。
 
 ## 编写工作流
 
@@ -241,12 +244,20 @@ return { ledger, synthesis };
 | `retry` | `retry(thunk, { attempts?=3, until? }) → unknown` —— `until` 必须同步 |
 | `gate` | `gate(thunk, validator, { attempts?=3 }) → { ok, value, attempts }` —— validator 需返回 `{ ok }` |
 | `checkpoint` | `checkpoint(prompt, { default?, headless?, kind?, choices?, timeoutMs? }) → unknown` |
+| `consult` | `consult(prompt, { to?="agent", agent?, apply?="auto", timeoutMs? }) → Promise<{ applied, revisedScript?, summary }>` —— 运行中干预点：live 执行中断脚本并挂起运行，重放时返回 journaled 结果 |
 | `phase` | `phase(title, { budget? })` —— 声明当前阶段，可带软性子预算 |
 | `log` | `log(message)` —— 新代码用它；`console.*` 仅为兼容保留 |
 | `args`、`cwd`、`process`、`budget` | 调用参数 · 运行 cwd · `{ cwd() }` · `{ total, spent(), remaining() }`（软性记账） |
 
 `checkpoint` 的 `confirm` 与 headless 路径已实现；`kind: "input" \| "select"` 和 `timeoutMs` 仅在契约中声明、
 尚未接通 —— 不要依赖。
+
+`consult` 是**运行中干预点**：脚本执行到该行即中断（抛 `CONSULT_PENDING`），运行挂起为
+`waiting_consult`，由审阅者（默认运行内子代理，`to: "main"` 则投递主代理）给出修改后的脚本，
+经重放式续跑应用（journal 重放已完成调用，只执行变化部分）。恢复运行时重放命中 journal 结果，
+`consult()` 返回 `{ applied, revisedScript?, summary }`。默认 `apply: "auto"`（子代理建议直接
+应用）；`apply: "confirm"` 先出建议再经主代理确认；自动应用超过 5 次后回落人工答复。审阅失败的
+运行可带脚本 resume 重新咨询。同步执行（headless）下 consult 表现为工具报错，文案含回复指引。
 
 运行级共享存储**不是**脚本全局。智能体拿到的是 `store_put` / `store_get` 工具，跨智能体状态经由**智能体**写入
 的 store 流转，脚本侧读不到。
@@ -403,6 +414,7 @@ bun run web:dev     # Vite 跑 :5178，把 /api 代理到 :7788
 | `deliveredResultMaxChars` | 1–1000000 | `400` |
 | `excludeSubagentTools` | string[] | `[]`（叠加在始终排除的编排工具之上） |
 | `syncMode` | `"auto"` \| `"always"` \| `"never"` | `"auto"` | 控制 `workflow` 工具 `background` 默认：`auto` 随会话形态（TUI 有 UI → 后台；headless → 同步）；`always` 强制同步；`never` 强制后台 |
+| `phaseNotify` | `"off"` \| `"phase"` | `"phase"` | 每个阶段开始时向会话投递上一阶段的一行进度摘要（不阻塞、不唤醒回合）；`"off"` 关闭 |
 | `web.enabled` | boolean | `true`（只有显式 `false` 才关闭） |
 | `web.port` | 1–65535 | `0`（临时端口） |
 | `web.announce` | boolean | `true` |
@@ -417,6 +429,7 @@ bun run web:dev     # Vite 跑 :5178，把 /api 代理到 :7788
   "defaultConcurrency": 8,
   "defaultAgentRetries": 1,
   "syncMode": "auto",
+  "phaseNotify": "phase",
   "progressPanelMode": "detailed",
   "web": { "enabled": true, "port": 0, "announce": true, "open": false }
 }

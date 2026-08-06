@@ -2,12 +2,12 @@
 name: workflow-patterns
 description: 5 个内置工作流模式（deep-research、adversarial-review、code-review、multi-perspective、codebase-audit）的参数形态，可通过 `workflow` 工具的 `name` 输入直接运行，无需斜杠命令语法。适用于「研究 X」「对这份内容做事实核查或对抗性审查」「审查这个 diff/PR」「从多个视角分析」「审计代码库中的 Y」等请求。若需编写新的工作流脚本，见 workflow-authoring。
 metadata:
-  version: "3.5.0"
+  version: "0.1.0"
 ---
 
 # 内置工作流模式
 
-pi-dynamic-workflows 内置 5 个经过筛选和测试的工作流模式。每个模式同时也是
+omp-dynamic-workflows 内置 5 个经过筛选和测试的工作流模式。每个模式同时也是
 斜杠命令（`/deep-research`、`/adversarial-review`、`/code-review`、
 `/multi-perspective`、`/codebase-audit`），但也可以直接从 `workflow` 工具
 调用：把 `name` 设为下面的模式名、`args` 按对应形态传入即可，而不必从头编写
@@ -37,9 +37,9 @@ pi-dynamic-workflows 内置 5 个经过筛选和测试的工作流模式。每�
 { "name": "deep-research", "args": { "question": "What are the tradeoffs of X vs Y?" } }
 ```
 
-这是一次 `workflow` 工具调用，不是脚本，请完全省略 `script`。运行会像斜杠命令
-形式一样在后台启动；`background`、`maxAgents`、`concurrency`、`agentRetries`、
-`agentTimeoutMs`、`tokenBudget` 这些参数仍然全部生效。
+这是一次 `workflow` 工具调用，不是脚本，请完全省略 `script`。启动模式由 `syncMode`
+决定：TUI 会话默认后台，无 UI 会话默认同步；`background`、`maxAgents`、`concurrency`、
+`agentRetries`、`agentTimeoutMs`、`tokenBudget` 这些参数仍然全部生效。
 
 ## 需要时编写新的工作流
 

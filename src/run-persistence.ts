@@ -17,7 +17,7 @@ import {
 } from "./fs-persistence.js";
 import { workflowProjectPaths } from "./workflow-paths.js";
 
-export type RunStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted";
+export type RunStatus = "pending" | "running" | "paused" | "waiting_consult" | "completed" | "failed" | "aborted";
 
 export interface PersistedAgentState {
   id: number;

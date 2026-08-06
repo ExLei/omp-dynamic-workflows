@@ -1,7 +1,7 @@
 /** Mirrors the payloads emitted by src/web-server.ts. */
 
 export type AgentStatus = "queued" | "running" | "done" | "error" | "skipped";
-export type RunStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted";
+export type RunStatus = "pending" | "running" | "paused" | "waiting_consult" | "completed" | "failed" | "aborted";
 
 export interface TokenUsage {
   input: number;
