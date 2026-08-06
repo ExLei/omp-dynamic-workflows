@@ -1,7 +1,7 @@
 import { javascript } from "@codemirror/lang-javascript";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { CheckCircle2, Play, Save, Workflow } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "../store";
 import { OutlineFlow } from "./OutlineFlow";
 import { SplitGroup, SplitHandle, SplitPane } from "./Split";
@@ -9,15 +9,20 @@ import { Button, Panel } from "./ui";
 
 export function Authoring() {
   const script = useStore((s) => s.script);
-  const argsText = useStore((s) => s.argsText);
+  const question = useStore((s) => s.question);
+  const advancedArgsText = useStore((s) => s.advancedArgsText);
   const parse = useStore((s) => s.parse);
   const notice = useStore((s) => s.notice);
   const focusLine = useStore((s) => s.focusLine);
   const setScript = useStore((s) => s.setScript);
-  const setArgsText = useStore((s) => s.setArgsText);
+  const setQuestion = useStore((s) => s.setQuestion);
+  const setAdvancedArgsText = useStore((s) => s.setAdvancedArgsText);
   const validate = useStore((s) => s.validate);
   const start = useStore((s) => s.start);
   const openSaveDialog = useStore((s) => s.openSaveDialog);
+  const builtins = useStore((s) => s.builtins);
+  const saved = useStore((s) => s.saved);
+  const runName = useStore((s) => s.runName);
   const view = useRef<EditorView | null>(null);
 
   // Debounced validation: the analyzer is cheap (one acorn parse) but the
@@ -41,6 +46,17 @@ export function Authoring() {
   }, [focusLine]);
 
   const outline = parse?.outline;
+
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // 与 store.start() 相同的按名判定，仅用于展示发送去向。
+  const targetName = runName.trim();
+  const byName =
+    targetName !== "" &&
+    (!script.trim() ||
+      builtins.some((b) => b.name === targetName && script === b.script) ||
+      saved.some((s) => s.name === targetName && script === s.script));
+  const targetLabel = byName ? targetName : script.trim() ? "当前脚本" : "未选择";
 
   return (
     <SplitGroup id="authoring" orientation="vertical">
@@ -75,14 +91,41 @@ export function Authoring() {
               />
             </div>
             <div className="shrink-0 border-t border-ink-600 p-2">
-              <div className="mb-1 text-[11px] tracking-wider text-ink-300 uppercase">参数 (JSON)</div>
+              <div className="mb-1 text-[11px] tracking-wider text-ink-300 uppercase">问题</div>
               <textarea
-                value={argsText}
-                onChange={(event) => setArgsText(event.target.value)}
-                rows={2}
+                value={question}
+                onChange={(event) => setQuestion(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void start();
+                  }
+                }}
+                rows={3}
                 spellCheck={false}
+                placeholder="输入你的问题，Enter 直接发送…"
                 className="w-full resize-y rounded border border-ink-600 bg-ink-950 p-1.5 text-[12px] outline-none focus:border-accent"
               />
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-ink-300">
+                <span>发送至 {targetLabel}</span>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                  className="underline-offset-2 hover:text-ink-100 hover:underline"
+                >
+                  高级参数 (JSON) {showAdvanced ? "▾" : "▸"}
+                </button>
+              </div>
+              {showAdvanced && (
+                <textarea
+                  value={advancedArgsText}
+                  onChange={(event) => setAdvancedArgsText(event.target.value)}
+                  rows={2}
+                  spellCheck={false}
+                  placeholder='{"diff": "…", "level": "xhigh"}（优先于问题框）'
+                  className="mt-1 w-full resize-y rounded border border-ink-600 bg-ink-950 p-1.5 text-[12px] outline-none focus:border-accent"
+                />
+              )}
               {parse && !parse.ok && <div className="mt-1 text-[12px] text-bad">脚本无效:{parse.error}</div>}
               {parse?.ok && parse.meta && (
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-ink-300">

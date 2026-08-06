@@ -71,7 +71,8 @@ interface WorkflowStore {
   focusLine: number | null;
   feed: FeedEntry[];
   script: string;
-  argsText: string;
+  question: string;
+  advancedArgsText: string;
   runName: string;
   parse: ParseResult | null;
   notice: { kind: "info" | "error"; text: string } | null;
@@ -87,7 +88,8 @@ interface WorkflowStore {
   loadAgentDetail: () => Promise<void>;
   focusOutline: (line: number) => void;
   setScript: (script: string) => void;
-  setArgsText: (argsText: string) => void;
+  setQuestion: (question: string) => void;
+  setAdvancedArgsText: (advancedArgsText: string) => void;
   setRunName: (name: string) => void;
   validate: () => Promise<ParseResult | null>;
   start: () => Promise<void>;
@@ -101,6 +103,14 @@ interface WorkflowStore {
   commitSave: () => Promise<void>;
   loadSaved: (name: string) => void;
 }
+
+/** 可用问题框驱动的内置模式 → 其必填 args 键；code-review 需要 diff，不在此列。 */
+const BUILTIN_QUESTION_KEY: Record<string, string> = {
+  "deep-research": "question",
+  "adversarial-review": "task",
+  "multi-perspective": "topic",
+  "codebase-audit": "scope",
+};
 
 let feedSeq = 0;
 
@@ -146,7 +156,8 @@ export const useStore = create<WorkflowStore>((set, get) => ({
   focusLine: null,
   feed: [],
   script: SAMPLE_SCRIPT,
-  argsText: "{}",
+  question: "",
+  advancedArgsText: "",
   runName: "",
   parse: null,
   notice: null,
@@ -258,8 +269,11 @@ export const useStore = create<WorkflowStore>((set, get) => ({
   setScript(script) {
     set({ script });
   },
-  setArgsText(argsText) {
-    set({ argsText });
+  setQuestion(question) {
+    set({ question });
+  },
+  setAdvancedArgsText(advancedArgsText) {
+    set({ advancedArgsText });
   },
   setRunName(runName) {
     set({ runName });
@@ -282,16 +296,65 @@ export const useStore = create<WorkflowStore>((set, get) => ({
   },
 
   async start() {
-    const { script, argsText, runName } = get();
-    let args: unknown;
-    try {
-      args = argsText.trim() ? JSON.parse(argsText) : undefined;
-    } catch {
-      set({ notice: { kind: "error", text: "参数不是合法 JSON" } });
+    const { script, question, advancedArgsText, runName, builtins, saved } = get();
+    const targetName = runName.trim();
+    const trimmedQuestion = question.trim();
+    const builtin = builtins.find((b) => b.name === targetName);
+    const savedWorkflow = saved.find((w) => w.name === targetName);
+    // 按名运行意图：空编辑器 + 已知名称，或脚本未被改动（等于预览/保存脚本）。
+    // 被改过的脚本按脚本发送；未改动的内置预览走按名（生成脚本 + tools/toolset 绑定，
+    // 并规避 multi-perspective/codebase-audit 预览里的 <topic>/<scope> 字面量）。
+    const byName =
+      targetName !== "" &&
+      (!script.trim() ||
+        (builtin !== undefined && script === builtin.script) ||
+        (savedWorkflow !== undefined && script === savedWorkflow.script));
+
+    if (!targetName && !script.trim()) {
+      set({ notice: { kind: "error", text: "没有可运行的工作流：请选择内置/已保存工作流或在编辑器中编写脚本" } });
       return;
     }
+
+    let args: unknown;
+    const json = advancedArgsText.trim();
+    if (json) {
+      try {
+        args = JSON.parse(json);
+      } catch {
+        set({ notice: { kind: "error", text: "参数不是合法 JSON" } });
+        return;
+      }
+      // JSON 里缺必填键时用问题框补齐（如 {"angles":3} + 问题 → {angles, question}）。
+      if (builtin && trimmedQuestion) {
+        const key = BUILTIN_QUESTION_KEY[builtin.name];
+        if (key && !(args as Record<string, unknown>)[key]) {
+          args = { ...(args as Record<string, unknown>), [key]: trimmedQuestion };
+        }
+      }
+    } else {
+      if (!trimmedQuestion) {
+        set({ notice: { kind: "error", text: "请输入问题" } });
+        return;
+      }
+      if (builtin) {
+        const key = BUILTIN_QUESTION_KEY[builtin.name];
+        if (!key) {
+          set({
+            notice: {
+              kind: "error",
+              text: `${builtin.name} 需要 diff 参数，不适合提问：请展开「高级参数 (JSON)」输入 { "diff": "…" }`,
+            },
+          });
+          return;
+        }
+        args = { [key]: trimmedQuestion };
+      } else {
+        args = { question: trimmedQuestion };
+      }
+    }
+
     try {
-      const body = script.trim() ? { script, args } : { name: runName.trim(), args };
+      const body = byName ? { name: targetName, args } : { script, args };
       const { runId } = await api.start(body);
       set({ notice: { kind: "info", text: `已启动 ${runId}` } });
       await get().selectRun(runId);
