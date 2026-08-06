@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useStore } from "../store";
 import { RuntimeFlow } from "./RuntimeFlow";
 import { SplitGroup, SplitHandle, SplitPane } from "./Split";
-import { Button, fmtCost, fmtElapsed, fmtTokens, Panel, StatusDot } from "./ui";
+import { Button, fmtCost, fmtElapsed, fmtTokens, Panel, StatusDot, statusLabel } from "./ui";
 
 /** Run-scoped views only: anything about one agent lives in the drawer. */
 type Tab = "agents" | "result" | "logs" | "events";
@@ -21,7 +21,9 @@ export function Runtime() {
   const snapshot = useStore((s) => (s.selectedRunId ? s.snapshots[s.selectedRunId] : undefined));
   const run = useStore((s) => s.runs.find((entry) => entry.runId === s.selectedRunId));
   const control = useStore((s) => s.control);
+  const reply = useStore((s) => s.reply);
   const remove = useStore((s) => s.remove);
+  const script = useStore((s) => s.script);
   const [tab, setTab] = useState<Tab>("agents");
 
   const status = run?.status;
@@ -39,11 +41,11 @@ export function Runtime() {
                 <Pause className="inline size-3" /> 暂停
               </Button>
               <Button
-                disabled={status !== "paused" && status !== "failed"}
-                onClick={() => void control("resume")}
+                disabled={status !== "waiting_consult" && status !== "paused" && status !== "failed"}
+                onClick={() => (status === "waiting_consult" ? void reply(script) : void control("resume"))}
                 tone="primary"
               >
-                <Play className="inline size-3" /> 恢复
+                <Play className="inline size-3" /> {status === "waiting_consult" ? "回复并继续" : "恢复"}
               </Button>
               <Button disabled={status !== "running" && status !== "paused"} onClick={() => void control("stop")}>
                 <Square className="inline size-3" /> 停止
@@ -60,6 +62,7 @@ export function Runtime() {
             <div className="flex h-full min-h-0 flex-col">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink-600 px-3 py-1.5 font-mono text-[12px] text-ink-300">
                 <StatusDot status={status ?? "pending"} pulse />
+                <span className="text-ink-300">{status ? statusLabel(status) : "—"}</span>
                 <span className="text-ink-100">{snapshot.name}</span>
                 <span>阶段 {snapshot.currentPhase ?? "-"}</span>
                 <span>

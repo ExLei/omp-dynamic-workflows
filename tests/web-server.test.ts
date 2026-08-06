@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AgentRunOptions } from "../src/agent.js";
 import { outlineWorkflowScript } from "../src/web-outline.js";
 import { startWorkflowWebServer, type WorkflowWebServer } from "../src/web-server.js";
+import { hashConsult } from "../src/workflow.js";
 import { WorkflowManager } from "../src/workflow-manager.js";
 import { createWorkflowStorage } from "../src/workflow-saved.js";
 
@@ -320,5 +321,362 @@ describe("workflow web server", () => {
       });
       expect(rejected.status).toBe(400);
     });
+  });
+
+  test("resume accepts an optional script body and routes waiting_consult to resolveConsult", async () => {
+    // One held agent per invocation: the consult run's post-resume agent call,
+    // then the plain run's agent call that pause() interrupts.
+    const gateA = Promise.withResolvers<unknown>();
+    const gateB = Promise.withResolvers<unknown>();
+    let invocation = 0;
+    await withServer(
+      async (server, manager) => {
+        const base = `http://127.0.0.1:${server.port}`;
+        const parkScript =
+          'export const meta = { name: "consult-run", description: "park" };\n' +
+          'consult("q", { to: "main" });\n' +
+          "return 'unreachable';";
+        const replyScript =
+          'export const meta = { name: "consult-run", description: "reply" };\n' +
+          'consult("q", { to: "main" });\n' +
+          'return await agent("go", { label: "worker" });';
+        const plainScript =
+          'export const meta = { name: "plain-run", description: "hold an agent" };\n' +
+          'return await agent("go", { label: "worker" });';
+        const doneScript = 'export const meta = { name: "plain-run", description: "replacement" };\nreturn 7;';
+
+        // A malformed reply never reaches the manager: 400 up front, the run
+        // stays parked on waiting_consult.
+        const { runId, promise: parked } = manager.startInBackground(parkScript);
+        await parked.catch(() => {});
+        expect(manager.getRun(runId)?.status).toBe("waiting_consult");
+        const bad = await fetch(`${base}/api/runs/${runId}/resume`, {
+          method: "POST",
+          headers: auth,
+          body: JSON.stringify({ script: "return 1" }),
+        });
+        expect(bad.status).toBe(400);
+        expect((await bad.json()).error).toContain("脚本无效");
+        expect(manager.getRun(runId)?.status).toBe("waiting_consult");
+
+        // A valid reply routes to resolveConsult: the outcome is journaled on
+        // disk BEFORE resume, and the run is back executing.
+        const ok = await (
+          await fetch(`${base}/api/runs/${runId}/resume`, {
+            method: "POST",
+            headers: auth,
+            body: JSON.stringify({ script: replyScript }),
+          })
+        ).json();
+        expect(ok).toEqual({ ok: true });
+        for (let attempt = 0; attempt < 100 && manager.getRun(runId)?.snapshot.agents.length !== 1; attempt++) {
+          await Bun.sleep(25);
+        }
+        expect(manager.getRun(runId)?.status).toBe("running");
+        // Running runs keep their journal on disk — the consult entry proves
+        // the reply reached resolveConsult (only it journals consult outcomes).
+        const consultEntry = manager.getPersistence().load(runId)?.journal?.find((e) => e.index === 0);
+        expect(consultEntry).toEqual({
+          index: 0,
+          runId,
+          hash: hashConsult("q", { to: "main" }),
+          result: { applied: true, revisedScript: replyScript, summary: "应用了用户提供的脚本" },
+        });
+
+        // Non-waiting_consult resume with a script walks the existing path:
+        // pause a running run, resume with a replacement script — the resumed
+        // execution runs THAT script (its return value proves it).
+        const { runId: plainId } = manager.startInBackground(plainScript);
+        for (let attempt = 0; attempt < 100 && manager.getRun(plainId)?.snapshot.agents.length !== 1; attempt++) {
+          await Bun.sleep(25);
+        }
+        const paused = await (
+          await fetch(`${base}/api/runs/${plainId}/pause`, { method: "POST", headers: auth })
+        ).json();
+        expect(paused).toEqual({ ok: true });
+        expect(manager.getRun(plainId)?.status).toBe("paused");
+
+        const resumed = await (
+          await fetch(`${base}/api/runs/${plainId}/resume`, {
+            method: "POST",
+            headers: auth,
+            body: JSON.stringify({ script: doneScript }),
+          })
+        ).json();
+        expect(resumed).toEqual({ ok: true });
+        let detail: { status?: string; script?: string; snapshot?: { result?: unknown } } = {};
+        for (let attempt = 0; attempt < 100; attempt++) {
+          detail = await (await fetch(`${base}/api/runs/${plainId}`, { headers: auth })).json();
+          if (detail.status === "completed" || detail.status === "failed") break;
+          await Bun.sleep(25);
+        }
+        expect(detail.status).toBe("completed");
+        expect(detail.script).toBe(doneScript);
+        expect(detail.snapshot?.result).toBe(7);
+
+        // Release both held agents so the runs settle before the cwd is wiped.
+        gateA.resolve("done:go");
+        gateB.resolve("done:go");
+      },
+      {
+        run() {
+          return (invocation++ === 0 ? gateA.promise : gateB.promise) as Promise<string>;
+        },
+      },
+    );
+  });
+
+  test("GET /api/runs/:id exposes pendingConsult.revisedScript ?? script for waiting_consult runs", async () => {
+    await withServer(async (server, manager) => {
+      const base = `http://127.0.0.1:${server.port}`;
+      const original =
+        'export const meta = { name: "consult", description: "park" };\n' +
+        'consult("q", { to: "main" });\n' +
+        "return 'unreachable';";
+      const revised =
+        'export const meta = { name: "consult", description: "park" };\n' +
+        'consult("q", { to: "main" });\n' +
+        "return 'revised';";
+
+      const { runId, promise } = manager.startInBackground(original);
+      await promise.catch(() => {});
+      expect(manager.getRun(runId)?.status).toBe("waiting_consult");
+
+      // No revision ready yet → the detail falls back to the run's own script.
+      const before = await (await fetch(`${base}/api/runs/${runId}`, { headers: auth })).json();
+      expect(before.script).toBe(original);
+
+      // Direct construction of a confirm-chain artifact (the manager has no
+      // public setter; mirror what maybeStartReviewChain's confirm branch
+      // writes onto the pending consult), in memory and on disk.
+      const live = manager.getRun(runId)!;
+      live.pendingConsult = { ...live.pendingConsult!, revisedScript: revised };
+      const persisted = manager.getPersistence().load(runId)!;
+      manager.getPersistence().save({
+        ...persisted,
+        pendingConsult: { ...persisted.pendingConsult!, revisedScript: revised },
+      });
+
+      // The detail surfaces the review's latest artifact so the console's
+      // reply path edits the revised script, not the original (spec §8).
+      const after = await (await fetch(`${base}/api/runs/${runId}`, { headers: auth })).json();
+      expect(after.status).toBe("waiting_consult");
+      expect(after.script).toBe(revised);
+    });
+  });
+
+  test("intervene parks the run named in the URL, never a different live run", async () => {
+    // One held agent per run: the fix under test is that the per-row 介入
+    // button routes by the CLICKED row's runId (store.control(action, runId)),
+    // so the endpoint must park exactly the URL-specified run and leave any
+    // other live run executing.
+    const gateA = Promise.withResolvers<unknown>();
+    const gateB = Promise.withResolvers<unknown>();
+    let invocation = 0;
+    await withServer(
+      async (server, manager) => {
+        const base = `http://127.0.0.1:${server.port}`;
+        const held =
+          'export const meta = { name: "held", description: "d" };\n' +
+          'return await agent("go", { label: "worker" });';
+        const { runId: runA, promise: doneA } = manager.startInBackground(held);
+        const { runId: runB } = manager.startInBackground(held);
+        for (let attempt = 0; attempt < 100 && manager.getRun(runB)?.snapshot.agents.length !== 1; attempt++) {
+          await Bun.sleep(25);
+        }
+        expect(manager.getRun(runA)?.status).toBe("running");
+        expect(manager.getRun(runB)?.status).toBe("running");
+
+        const intervened = await (
+          await fetch(`${base}/api/runs/${runB}/intervene`, { method: "POST", headers: auth })
+        ).json();
+        expect(intervened).toEqual({ ok: true });
+        expect(manager.getRun(runB)?.status).toBe("waiting_consult");
+        expect(manager.getRun(runA)?.status).toBe("running");
+
+        // Release both held agents so the runs settle before the cwd is wiped.
+        gateA.resolve("done:a");
+        gateB.resolve("done:b");
+        await doneA.catch(() => {});
+      },
+      {
+        run() {
+          return (invocation++ === 0 ? gateA.promise : gateB.promise) as Promise<string>;
+        },
+      },
+    );
+  });
+
+  test("resume rejects a non-string script and a malformed body with 400, never a silent bare resume", async () => {
+    await withServer(async (server, manager) => {
+      const base = `http://127.0.0.1:${server.port}`;
+      const parkScript =
+        'export const meta = { name: "consult-run", description: "park" };\n' +
+        'consult("q", { to: "main" });\n' +
+        "return 'unreachable';";
+      const { runId, promise: parked } = manager.startInBackground(parkScript);
+      await parked.catch(() => {});
+      expect(manager.getRun(runId)?.status).toBe("waiting_consult");
+
+      // Non-string script: previously coerced to "no script" — a bare resume
+      // that would have discarded the intended reply. Now a 400 up front.
+      const notString = await fetch(`${base}/api/runs/${runId}/resume`, {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({ script: 42 }),
+      });
+      expect(notString.status).toBe(400);
+      expect((await notString.json()).error).toContain("script");
+      expect(manager.getRun(runId)?.status).toBe("waiting_consult");
+
+      // Malformed JSON: previously swallowed into {} → bare resume. Now a 400.
+      const badJson = await fetch(`${base}/api/runs/${runId}/resume`, {
+        method: "POST",
+        headers: auth,
+        body: '{script: "oops"',
+      });
+      expect(badJson.status).toBe(400);
+      expect((await badJson.json()).error).toContain("JSON");
+      expect(manager.getRun(runId)?.status).toBe("waiting_consult");
+
+      // A bare (empty-body) resume stays valid — the console's 恢复 button.
+      // resolveConsult with no script is the documented 维持原脚本 continue:
+      // the run is released and its trivial script completes.
+      const bare = await fetch(`${base}/api/runs/${runId}/resume`, { method: "POST", headers: auth });
+      expect(bare.status).toBe(200);
+      expect((await bare.json()).ok).toBe(true);
+      let released: { status?: string } = {};
+      for (let attempt = 0; attempt < 100; attempt++) {
+        released = await (await fetch(`${base}/api/runs/${runId}`, { headers: auth })).json();
+        if (released.status === "completed" || released.status === "failed") break;
+        await Bun.sleep(25);
+      }
+      expect(released.status).toBe("completed");
+      expect(manager.getPersistence().load(runId)?.pendingConsult).toBeUndefined();
+    });
+  });
+
+  test("disk-only GET /api/runs/:id surfaces revisedScript ?? script after a cold start", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "omp-web-diskonly-"));
+    try {
+      const original =
+        'export const meta = { name: "consult", description: "park" };\n' +
+        'consult("q", { to: "main" });\n' +
+        "return 'unreachable';";
+      const revised =
+        'export const meta = { name: "consult", description: "park" };\n' +
+        'consult("q", { to: "main" });\n' +
+        "return 'revised';";
+
+      // Park a waiting_consult run in a first manager, then write the review
+      // revision to DISK only — the fresh manager below has no in-memory copy.
+      const first = new WorkflowManager({ cwd });
+      const { runId, promise } = first.startInBackground(original);
+      await promise.catch(() => {});
+      expect(first.getRun(runId)?.status).toBe("waiting_consult");
+      const persisted = first.getPersistence().load(runId)!;
+      first.getPersistence().save({
+        ...persisted,
+        pendingConsult: { ...persisted.pendingConsult!, revisedScript: revised },
+      });
+
+      // Cold start: a fresh manager + server over the same cwd (recoverStaleRuns
+      // leaves waiting_consult runs parked).
+      const manager = new WorkflowManager({ cwd });
+      expect(manager.getRun(runId)).toBeUndefined();
+      expect(manager.getPersistence().load(runId)?.status).toBe("waiting_consult");
+      const server = startWorkflowWebServer({
+        manager,
+        storage: createWorkflowStorage(cwd),
+        cwd,
+        port: 0,
+        token: TOKEN,
+      });
+      try {
+        const detail = await (
+          await fetch(`http://127.0.0.1:${server.port}/api/runs/${runId}`, { headers: auth })
+        ).json();
+        expect(detail.status).toBe("waiting_consult");
+        // The cold-start path reads pendingConsult.revisedScript off disk, so
+        // the console's reply baseline is the review's artifact, not the original.
+        expect(detail.script).toBe(revised);
+      } finally {
+        server.stop();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("disk-only waiting_consult resume routes to resolveConsult after a cold start", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "omp-web-diskonly-resume-"));
+    try {
+      const parkScript =
+        'export const meta = { name: "consult", description: "park" };\n' +
+        'consult("q", { to: "main" });\n' +
+        "return 'unreachable';";
+      const replyScript =
+        'export const meta = { name: "consult", description: "reply" };\n' +
+        'consult("q", { to: "main" });\n' +
+        'return await agent("go", { label: "worker" });';
+
+      const first = new WorkflowManager({ cwd });
+      const { runId, promise } = first.startInBackground(parkScript);
+      await promise.catch(() => {});
+      expect(first.getPersistence().load(runId)?.status).toBe("waiting_consult");
+
+      // Cold start: a fresh manager + server over the same cwd — the parked
+      // run exists only on disk; the resumed run's agent call is gate-held.
+      const gate = Promise.withResolvers<unknown>();
+      const manager = new WorkflowManager({ cwd, agent: { run: () => gate.promise } as never });
+      expect(manager.getRun(runId)).toBeUndefined();
+      const server = startWorkflowWebServer({
+        manager,
+        storage: createWorkflowStorage(cwd),
+        cwd,
+        port: 0,
+        token: TOKEN,
+      });
+      try {
+        const base = `http://127.0.0.1:${server.port}`;
+        const ok = await (
+          await fetch(`${base}/api/runs/${runId}/resume`, {
+            method: "POST",
+            headers: auth,
+            body: JSON.stringify({ script: replyScript }),
+          })
+        ).json();
+        expect(ok).toEqual({ ok: true });
+        for (let attempt = 0; attempt < 100 && manager.getRun(runId)?.snapshot.agents.length !== 1; attempt++) {
+          await Bun.sleep(25);
+        }
+        expect(manager.getRun(runId)?.status).toBe("running");
+
+        // Only resolveConsult journals consult outcomes — the entry proves the
+        // reply went through the disk-only resolveConsult branch, and the
+        // pending consult was cleared in the same critical section.
+        const released = manager.getPersistence().load(runId);
+        expect(released?.pendingConsult).toBeUndefined();
+        expect(released?.journal?.[0]).toEqual({
+          index: 0,
+          runId,
+          hash: hashConsult("q", { to: "main" }),
+          result: { applied: true, revisedScript: replyScript, summary: "应用了用户提供的脚本" },
+        });
+
+        gate.resolve("done");
+        let settled: { status?: string } = {};
+        for (let attempt = 0; attempt < 100; attempt++) {
+          settled = await (await fetch(`${base}/api/runs/${runId}`, { headers: auth })).json();
+          if (settled.status === "completed" || settled.status === "failed") break;
+          await Bun.sleep(25);
+        }
+        expect(settled.status).toBe("completed");
+      } finally {
+        server.stop();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });

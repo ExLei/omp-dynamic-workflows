@@ -71,6 +71,8 @@ export interface RunSummary {
   tokens: number;
   cost: number;
   pauseReason: string | null;
+  /** Set while the run is parked on waiting_consult: the intervention prompt. */
+  pendingConsult?: { prompt?: string } | null;
 }
 
 export interface SavedWorkflowInfo {

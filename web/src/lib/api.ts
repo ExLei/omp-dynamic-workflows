@@ -44,8 +44,14 @@ export const api = {
   detail: (runId: string) => call<RunDetail>(`/api/runs/${encodeURIComponent(runId)}`),
   agentDetail: (runId: string, agentId: number) =>
     call<AgentDetail>(`/api/runs/${encodeURIComponent(runId)}/agents/${agentId}`),
-  control: (runId: string, action: "pause" | "resume" | "stop") =>
+  control: (runId: string, action: "pause" | "resume" | "stop" | "intervene") =>
     call<{ ok: boolean }>(`/api/runs/${encodeURIComponent(runId)}/${action}`, { method: "POST" }),
+  /** 回复并继续: resume with a reply script (routes to resolveConsult when parked). */
+  reply: (runId: string, script: string) =>
+    call<{ ok: boolean }>(`/api/runs/${encodeURIComponent(runId)}/resume`, {
+      method: "POST",
+      body: JSON.stringify({ script }),
+    }),
   remove: (runId: string) => call<{ ok: boolean }>(`/api/runs/${encodeURIComponent(runId)}`, { method: "DELETE" }),
   saveLocations: (name: string) =>
     call<SaveLocations>(`/api/save-locations?name=${encodeURIComponent(name)}`),

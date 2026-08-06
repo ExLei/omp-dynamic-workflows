@@ -91,7 +91,9 @@ interface WorkflowStore {
   setRunName: (name: string) => void;
   validate: () => Promise<ParseResult | null>;
   start: () => Promise<void>;
-  control: (action: "pause" | "resume" | "stop") => Promise<void>;
+  control: (action: "pause" | "resume" | "stop" | "intervene", runId?: string) => Promise<void>;
+  /** 回复并继续: send the editor's script to the parked run (resolveConsult). */
+  reply: (script: string) => Promise<void>;
   remove: () => Promise<void>;
   openSaveDialog: () => Promise<void>;
   closeSaveDialog: () => void;
@@ -298,13 +300,32 @@ export const useStore = create<WorkflowStore>((set, get) => ({
     }
   },
 
-  async control(action) {
-    const runId = get().selectedRunId;
+  async control(action, runId = get().selectedRunId ?? undefined) {
     if (!runId) return;
     try {
       const { ok } = await api.control(runId, action);
-      const label = { pause: "暂停", resume: "恢复", stop: "停止" }[action] ?? action;
+      const label = { pause: "暂停", resume: "恢复", stop: "停止", intervene: "介入" }[action] ?? action;
       set({ notice: { kind: ok ? "info" : "error", text: `${label}: ${ok ? "成功" : "拒绝(状态不允许)"}` } });
+      // After a successful intervene the run is parked on waiting_consult —
+      // reload it so the editor picks up its script (revisedScript ?? script)
+      // as the reply baseline, and refresh the run list so the row's status
+      // stops showing a stale "运行中" (the consult-pending → runs SSE
+      // broadcast normally covers this; refresh() is the double insurance).
+      if (ok && action === "intervene") {
+        await get().selectRun(runId);
+        await get().refresh();
+      }
+    } catch (error) {
+      set({ notice: { kind: "error", text: String(error) } });
+    }
+  },
+
+  async reply(script) {
+    const runId = get().selectedRunId;
+    if (!runId) return;
+    try {
+      const { ok } = await api.reply(runId, script);
+      set({ notice: { kind: ok ? "info" : "error", text: ok ? "回复并继续：成功" : "回复并继续：拒绝(状态不允许)" } });
     } catch (error) {
       set({ notice: { kind: "error", text: String(error) } });
     }

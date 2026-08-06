@@ -10,6 +10,8 @@ import { useStore } from "./store";
 export default function App() {
   const connected = useStore((s) => s.connected);
   const cwd = useStore((s) => s.cwd);
+  const runs = useStore((s) => s.runs);
+  const selectRun = useStore((s) => s.selectRun);
   const connect = useStore((s) => s.connect);
   const refresh = useStore((s) => s.refresh);
 
@@ -17,6 +19,10 @@ export default function App() {
     void refresh();
     return connect();
   }, [connect, refresh]);
+
+  // Runs parked on a consult: surface the intervention prompt so the user can
+  // jump straight into the editor and reply.
+  const awaitingConsult = runs.filter((run) => run.status === "waiting_consult");
 
   return (
     <div className="flex h-full flex-col">
@@ -27,6 +33,21 @@ export default function App() {
           {connected ? "● 实时已连接" : "○ 未连接"}
         </span>
       </header>
+      {awaitingConsult.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-ink-600 bg-ink-800 px-3 py-1">
+          {awaitingConsult.map((run) => (
+            <button
+              key={run.runId}
+              type="button"
+              onClick={() => void selectRun(run.runId)}
+              className="max-w-full truncate font-mono text-[12px] text-accent hover:underline"
+              title="点击进入编辑器，修改脚本后点「回复并继续」"
+            >
+              待咨询 · {run.name}：{(run.pendingConsult?.prompt ?? "").slice(0, 80)}
+            </button>
+          ))}
+        </div>
+      )}
       <main className="relative min-h-0 flex-1">
         <SplitGroup id="main" orientation="horizontal">
           <SplitPane id="runs" defaultSize="17%" minSize="140px">

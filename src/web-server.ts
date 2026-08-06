@@ -41,6 +41,10 @@ const RUN_EVENTS = [
   "stopped",
   "paused",
   "resumed",
+  // A consult park (natural or intervene) emits ONLY this event — without it
+  // the browser never learns the run flipped to waiting_consult, keeps showing
+  // a stale 恢复 button, and a bare reply would discard the editor's edits.
+  "consult-pending",
 ] as const;
 
 /** Coalesce snapshot pushes per run: agent/history events can burst. */
@@ -276,7 +280,7 @@ export function startWorkflowWebServer(options: WorkflowWebServerOptions): Workf
       return json({ runId, live: Boolean(live), agent: serializeAgent(agent, true) });
     }
 
-    const runMatch = /^\/api\/runs\/([^/]+)(?:\/(pause|resume|stop))?$/.exec(path);
+    const runMatch = /^\/api\/runs\/([^/]+)(?:\/(pause|resume|stop|intervene))?$/.exec(path);
     if (runMatch) {
       const runId = decodeURIComponent(runMatch[1]!);
       const action = runMatch[2];
@@ -289,10 +293,17 @@ export function startWorkflowWebServer(options: WorkflowWebServerOptions): Workf
         const snapshot = live ? serializeSnapshot(live.snapshot, true) : persistedSnapshot(persisted);
         const result = live?.result?.result ?? persisted?.result;
         if (snapshot && result !== undefined) snapshot.result = result;
+        const status = live?.status ?? persisted?.status;
+        // A waiting_consult run's script field surfaces the auto-review's
+        // latest artifact (pendingConsult.revisedScript) so the console's
+        // reply path edits the reviewed script, not the original (spec §8);
+        // fall back to the run's own script when no revision is ready.
+        const pendingConsult = live?.pendingConsult ?? persisted?.pendingConsult;
         return json({
           runId,
-          status: live?.status ?? persisted?.status,
-          script: live?.script ?? persisted?.script,
+          status,
+          script:
+            status === "waiting_consult" ? pendingConsult?.revisedScript ?? (live?.script ?? persisted?.script) : live?.script ?? persisted?.script,
           args: live?.args ?? persisted?.args ?? null,
           live: Boolean(live),
           error: live?.error ? { message: live.error.message, code: live.error.code } : null,
@@ -304,7 +315,46 @@ export function startWorkflowWebServer(options: WorkflowWebServerOptions): Workf
       if (action && request.method === "POST") {
         if (action === "pause") return json({ ok: manager.pause(runId) });
         if (action === "stop") return json({ ok: manager.stop(runId) });
-        if (action === "resume") return json({ ok: await manager.resume(runId) });
+        if (action === "intervene") return json({ ok: manager.intervene(runId) });
+        if (action === "resume") {
+          // A malformed body must fail loudly, never silently degrade into a
+          // bare resume: non-string script → 400, bad JSON → 400. An empty
+          // body stays valid — the console's 恢复 button posts a bare resume.
+          const text = await request.text();
+          let body: { script?: unknown };
+          if (text.trim() === "") {
+            body = {};
+          } else {
+            try {
+              body = JSON.parse(text) as { script?: unknown };
+            } catch {
+              return json({ error: "请求体不是合法 JSON" }, 400);
+            }
+          }
+          if (body.script !== undefined && typeof body.script !== "string") {
+            return json({ error: "script 必须为字符串" }, 400);
+          }
+          const script = body.script;
+          // A reply script must pass the same gate every run script does — a
+          // broken script gets a 400 here instead of dying mid-run.
+          if (script !== undefined) {
+            try {
+              parseWorkflowScript(script);
+            } catch (error) {
+              return json({ error: `脚本无效: ${error instanceof Error ? error.message : String(error)}` }, 400);
+            }
+          }
+          const live = manager.getRun(runId);
+          const persisted = manager.listAllRuns().find((r) => r.runId === runId);
+          // waiting_consult runs are released only through resolveConsult
+          // (resume() refuses them by contract) — the console's 「回复并继续」
+          // lands here with the reply script.
+          const ok =
+            (live?.status ?? persisted?.status) === "waiting_consult"
+              ? await manager.resolveConsult(runId, script !== undefined ? { script } : undefined)
+              : await manager.resume(runId, script !== undefined ? { script } : undefined);
+          return json({ ok });
+        }
       }
     }
 
@@ -495,6 +545,7 @@ function summarizeRun(run: {
   durationMs?: number;
   tokenUsage?: { total?: number; cost?: number; cacheRead?: number; input?: number; output?: number };
   pauseReason?: string;
+  pendingConsult?: { prompt?: string };
 }) {
   const agents = run.agents ?? [];
   return {
@@ -513,6 +564,7 @@ function summarizeRun(run: {
     tokens: run.tokenUsage?.total ?? 0,
     cost: run.tokenUsage?.cost ?? 0,
     pauseReason: run.pauseReason ?? null,
+    pendingConsult: run.pendingConsult ? { prompt: run.pendingConsult.prompt } : null,
   };
 }
 

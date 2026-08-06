@@ -10,6 +10,7 @@ export function RunList() {
   const builtins = useStore((s) => s.builtins);
   const selectedRunId = useStore((s) => s.selectedRunId);
   const selectRun = useStore((s) => s.selectRun);
+  const control = useStore((s) => s.control);
   const loadSaved = useStore((s) => s.loadSaved);
 
   return (
@@ -20,21 +21,23 @@ export function RunList() {
             {runs.length === 0 && <li className="px-1 text-[13px] text-ink-300">暂无运行</li>}
             {runs.map((run) => (
               <li key={run.runId}>
-                <button
-                  type="button"
-                  onClick={() => void selectRun(run.runId)}
+                <div
                   className={clsx(
-                    "w-full rounded border px-2 py-1.5 text-left transition-colors",
+                    "rounded border px-2 py-1.5 transition-colors",
                     run.runId === selectedRunId
                       ? "border-accent bg-ink-700"
                       : "border-ink-600 bg-ink-800 hover:border-accent/60",
                   )}
                 >
-                  <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void selectRun(run.runId)}
+                    className="flex w-full items-center gap-2 text-left"
+                  >
                     <StatusDot status={run.status} pulse />
                     <span className="truncate font-mono text-[13px]">{run.name}</span>
                     <span className="ml-auto font-mono text-[11px] text-ink-300">{statusLabel(run.status)}</span>
-                  </div>
+                  </button>
                   <div className="mt-0.5 font-mono text-[11px] text-ink-300">
                     {run.doneCount}/{run.agentCount} 个 agent
                     {run.errorCount > 0 && <span className="text-bad"> · {run.errorCount} 错误</span>} ·{" "}
@@ -43,7 +46,21 @@ export function RunList() {
                   {run.currentPhase && (
                     <div className="truncate font-mono text-[11px] text-accent/80">▸ {run.currentPhase}</div>
                   )}
-                </button>
+                  {(run.status === "running" || run.status === "paused" || run.status === "waiting_consult") && (
+                    <button
+                      type="button"
+                      title={
+                        run.status === "waiting_consult"
+                          ? "进入编辑器，修改脚本后点「回复并继续」"
+                          : "暂停执行并进入人工介入"
+                      }
+                      onClick={() => void (run.status === "waiting_consult" ? selectRun(run.runId) : control("intervene", run.runId))}
+                      className="mt-1 w-full rounded border border-ink-600 px-1.5 py-0.5 font-mono text-[11px] text-accent hover:border-accent"
+                    >
+                      ✎ 介入
+                    </button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>
