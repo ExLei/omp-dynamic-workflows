@@ -16,7 +16,10 @@ import { hashConsult } from "../src/workflow.js";
  */
 const CONSULT_SCRIPT =
   'export const meta = { name: "consult-resolve", description: "resolve state machine" };\n' +
-  'consult("q", { to: "agent" });\n' +
+  // to:"main"：纯 park 路径（apply 缺省归一 "auto" 后 to:"agent" 会触发自动审阅链；
+  // 本文件以 resolve 状态机为对象，无 mock 审阅执行器的测试必须用 to:"main" 保持
+  // 挂起等待语义——双审查关键 1 的测试对齐）。
+  'consult("q", { to: "main" });\n' +
   "return 'unreachable';";
 
 /**
@@ -177,8 +180,11 @@ describe("resolveConsult", () => {
       // Park a run on waiting_consult in a first manager, then cold-start a
       // fresh manager over the same cwd: recoverStaleRuns only flips
       // running→paused, so the waiting_consult run stays parked on disk with
-      // no in-memory copy in the new manager.
-      const runId = await parkConsultRun(new WorkflowManager({ cwd }), CONSULT_THEN_AGENT_SCRIPT);
+      // no in-memory copy in the new manager. 首 manager 注入阻塞 mock：脚本
+      // consult(to:"agent") 会触发自动审阅链（apply 缺省归一 "auto"），mock 把链
+      // 挂住、不派生真实审阅代理（双审查关键 1 测试对齐）。
+      const first = createBlockingAgentManager(cwd);
+      const runId = await parkConsultRun(first.manager, CONSULT_THEN_AGENT_SCRIPT);
 
       const diskOnly = createBlockingAgentManager(cwd);
       expect(diskOnly.manager.getRun(runId)).toBeUndefined();
@@ -237,7 +243,7 @@ describe("markConsultFailed", () => {
       expect(persisted?.journal?.[0]).toEqual({
         index: 0,
         runId,
-        hash: hashConsult("q", { to: "agent" }),
+        hash: hashConsult("q", { to: "main" }),
         result: { applied: false, reason: "review chain produced no answer", settled: false },
       });
 
@@ -481,9 +487,10 @@ describe("generation gating", () => {
         index: 0,
         runId,
         hash: hashConsult("q", { to: "agent" }),
-        // buildOutcome only journals the chain's summary on a "confirm"-apply
-        // consult; an auto-apply outcome is 维持原脚本 (裁定 #4).
-        result: { applied: false, summary: "维持原脚本" },
+        // 双审查重要 2：链应用 → outcome 如实报 applied:true + 链摘要 + 已应用脚本
+        // （不再报 applied:false/维持原脚本——旧注释「auto 应用 outcome 是维持原
+        // 脚本」记录的就是该误导值）。
+        result: { applied: true, summary: "fresh", revisedScript: CONSULT_THEN_AGENT_SCRIPT },
       });
       expect(persisted?.pendingConsult).toBeUndefined();
 

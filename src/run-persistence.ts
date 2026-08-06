@@ -50,8 +50,8 @@ export interface PersistedAgentState {
  * "waiting_consult"), written by the manager's executeRun catch tail when a
  * CONSULT_PENDING error surfaces (or created by intervene() with no call
  * anchor). intervene() re-targets it to "main" and bumps generation;
- * applyReviewChain records the review's summary on it; resolveConsult
- * journals the outcome under it (skipping the journal write when it has no
+ * resolveConsult merges the review chain's summary into it when it journals
+ * the outcome (skipping the journal write when it has no
  * anchor) and clears it before the run is resumed. resume() rehydrates it
  * onto the ManagedRun so the continuation knows what it is answering.
  * Persisted so a waiting_consult run survives a cold restart (the user's
@@ -190,9 +190,11 @@ export interface PersistedRunState {
   /**
    * How many times this run's consult outcome has been applied automatically
    * (apply: "auto" — no user confirmation). Run-level counter, owned and
-   * incremented by the manager's resolveConsult — mirrors the
-   * autoResumeAttempts ownership pattern (persisted by whoever mutates it by
-   * load-modify-save, not by the generic writeRunToDisk save path).
+   * incremented by the manager's auto-review chain on each completed cycle
+   * (successful apply or markConsultFailed — see runAutoReviewChain). Carried
+   * on the ManagedRun and persisted by the generic writeRunToDisk save path,
+   * so a resumed execution's next consult trigger re-reads the accumulated
+   * total to enforce the cap (递增前 > 5 不再触发).
    */
   consultAutoApplied?: number;
 }

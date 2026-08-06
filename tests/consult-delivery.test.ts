@@ -51,6 +51,16 @@ const CONSULT_AGENT_SCRIPT =
   'consult("请审核以下方案。", { to: "agent" });\n' +
   "return 'unreachable';";
 
+/**
+ * 进入命名阶段后 consult(to:agent, apply:auto)（卫生项 ①）：规格 §7 无条件补投
+ * 当前 phase 行——即使自动审阅链自治、不投咨询消息，进度行也不能丢。
+ */
+const CONSULT_AGENT_AUTO_SCRIPT =
+  'export const meta = { name: "consult-auto", description: "delivery probe", phases: [{ title: "alpha" }] };\n' +
+  'phase("alpha");\n' +
+  'consult("自动审阅", { to: "agent", apply: "auto" });\n' +
+  "return 'unreachable';";
+
 /** 常驻运行（agent 永不自行结束）——用于手动 emit phase 事件的投递断言。 */
 const BLOCKING_SCRIPT =
   'export const meta = { name: "phase_probe", description: "p" };\n' +
@@ -446,6 +456,83 @@ describe("consult delivery", () => {
       const { fresh, cacheRead } = aggregateAgentUsage(run.snapshot.agents);
       expect(sent[0]!.content).toContain(`，累计 ${compactTokens(fresh + cacheRead)} tok`);
       expect(compactTokens(fresh + cacheRead)).toBe("850");
+
+      manager.stop(runId);
+      await promise.catch(() => {});
+    } finally {
+      cleanup(cwd);
+    }
+  });
+
+  test("⑪ 卫生项 ①：consult(to:agent, apply:auto) 也先补投当前 phase 行（规格 §7 无条件补投），再抑制咨询消息", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "omp-consult-auto-flush-"));
+    try {
+      // 审阅链 mock 常驻挂起：run 停在 waiting_consult，不被链应用/失败终结。
+      const manager = blockingManager(cwd, {});
+      const sent: Sent[] = [];
+      installResultDelivery(capturePi(sent) as never, manager, {});
+      const { runId, promise } = manager.startInBackground(CONSULT_AGENT_AUTO_SCRIPT);
+      await promise.catch(() => {});
+      expect(manager.getRun(runId)?.status).toBe("waiting_consult");
+
+      // 只有补投的 phase 行（triggerTurn:false），无 workflow.consult 消息
+      // （自动审阅链自治，投递侧抑制）。
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.content).toContain(`阶段「alpha」`);
+      expect(sent[0]!.triggerTurn).toBe(false);
+      expect(sent.some((m) => m.customType === "workflow.consult")).toBe(false);
+    } finally {
+      cleanup(cwd);
+    }
+  });
+
+  test("⑫ 卫生项 ②：loadSettings 抛错 → phase 行仍投递（默认 phase，进度行不因设置读取失败丢失）", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "omp-consult-settings-throw-"));
+    try {
+      const sent: Sent[] = [];
+      await startConsultRun(cwd, CONSULT_MAIN_SCRIPT, sent, {
+        loadSettings: () => {
+          throw new Error("settings boom");
+        },
+      });
+
+      expect(sent).toHaveLength(2);
+      expect(sent[0]!.content).toContain(`阶段「alpha」`);
+      expect(sent[0]!.triggerTurn).toBe(false);
+      expect(sent[1]!.customType).toBe("workflow.consult");
+    } finally {
+      cleanup(cwd);
+    }
+  });
+
+  test("⑬ 卫生项 ②：error/stopped 后无陈旧 flush（lastPhaseByRun 闭合，后续 complete 不再补投旧 phase 行）", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "omp-phase-stale-"));
+    const started: { resolve?: () => void } = {};
+    const began = new Promise<void>((resolve) => {
+      started.resolve = resolve;
+    });
+    const manager = blockingManager(cwd, started);
+    try {
+      const { runId, promise } = manager.startInBackground(BLOCKING_SCRIPT);
+      await began;
+      const sent: Sent[] = [];
+      installResultDelivery(capturePi(sent) as never, manager, {});
+
+      // error 闭合 lastPhase：complete 补投时无旧 phase 行可投。
+      manager.emit("phase", { runId, title: "alpha" });
+      manager.emit("error", { runId, error: { message: "boom" } });
+      manager.emit("complete", { runId });
+      expect(sent).toHaveLength(2);
+      expect(sent[0]!.content).toContain("failed: boom");
+      expect(sent[1]!.content).toContain("finished");
+      expect(sent.some((m) => m.content.includes("阶段「"))).toBe(false);
+
+      // stopped 同样闭合：重新注册 phase 后 stopped，complete 不再补投。
+      manager.emit("phase", { runId, title: "beta" });
+      manager.emit("stopped", { runId });
+      manager.emit("complete", { runId });
+      expect(sent).toHaveLength(4);
+      expect(sent.some((m) => m.content.includes("阶段「"))).toBe(false);
 
       manager.stop(runId);
       await promise.catch(() => {});

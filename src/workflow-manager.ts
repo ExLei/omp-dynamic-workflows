@@ -2,9 +2,13 @@
  * Workflow manager for background execution, pause/resume, and run management.
  */
 
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ModelRegistry, ToolDefinition } from "./omp-api.js";
-import type { WorkflowAgent } from "./agent.js";
+import { WorkflowAgent, type AgentUsage } from "./agent.js";
 import { preview, type WorkflowAgentSnapshot, type WorkflowSnapshot } from "./display.js";
 import { isProviderUsageLimit, WorkflowError, WorkflowErrorCode } from "./errors.js";
 import {
@@ -49,19 +53,52 @@ function isConsultPendingPayload(
   );
 }
 
+/** 审阅子代理返回的 JSON 形状（宽松：只读 ok/summary/reason 三个可选字段）。 */
+interface ReviewReply {
+  ok?: unknown;
+  summary?: unknown;
+  reason?: unknown;
+}
+
+/** 类型守卫：审阅子代理的 JSON 返回是对象即可按 ReviewReply 读取（字段逐一 typeof 校验）。 */
+function isReviewReply(value: unknown): value is ReviewReply {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Manager-side extension of PendingConsult (双审查次要 2)：confirm 链把建议文件
+ * 路径记在 pending 上（revisedPath），随 writeRunToDisk 原样落盘（PersistedRunState
+ * 的 PendingConsult 形状不含该键，多余键运行时保留、类型上宽容）——resolveConsult
+ * / stop() / markConsultFailed / deleteRun 在 pending 消亡时 rmSync(force:true)。
+ */
+type ManagerPendingConsult = PendingConsult & { revisedPath?: string };
+
+/** 一次审阅失败的原因分类（双审查次要 3：重试反馈按原因分流）。 */
+type ReviewFailureKind = "reject" | "nofile" | "parse" | "error";
+
 /**
  * The journaled outcome a resolved consult() call returns (ConsultOutcome),
  * built from the pending consult at resolution time. A "confirm"-apply consult
- * adopts the review's revised script; every other shape (to:"main" replies,
- * auto-apply over-limit fallbacks) continues with the original script —
- * "维持原脚本继续" (spec §4). applyReviewChain records the review's summary on
- * the pending consult so it lands here; the revisedScript is what a confirm
- * flow stored on the pending consult (absent for user replies, which carry
- * their edit as resolveConsult's script instead).
+ * adopts the review's revised script; an auto-apply consult whose chain
+ * APPLIED a revision (resolveConsult received the chain's `summary` marker)
+ * reports applied:true with the applied revised script; every other shape
+ * (to:"main" replies, user replies, auto-apply over-limit fallbacks) continues
+ * with the original script — "维持原脚本继续" (spec §4). resolveConsult merges
+ * the review chain's summary into the pending consult when it builds this
+ * outcome; the revisedScript is what a confirm flow stored on the pending
+ * consult (absent for user replies, which carry their edit as resolveConsult's
+ * script instead).
  */
-function buildConsultOutcome(pending: PendingConsult): ConsultOutcome {
+function buildConsultOutcome(pending: PendingConsult, script?: string): ConsultOutcome {
   if (pending.opts.apply === "confirm") {
     return { applied: true, revisedScript: pending.revisedScript, summary: pending.summary ?? "" };
+  }
+  // 链已应用（resolveConsult 收到 summary 标记）：修订脚本真实生效——outcome 如实
+  // 报 applied:true 并携带链摘要与已应用脚本（双审查重要 2：auto 应用后不得再报
+  // applied:false/维持原脚本，ConsultOutcome.applied 自身 doc 说「Whether the
+  // review's revised script was applied」）。
+  if (pending.summary !== undefined) {
+    return { applied: true, summary: pending.summary, revisedScript: script ?? pending.revisedScript };
   }
   return { applied: false, summary: "维持原脚本" };
 }
@@ -77,12 +114,19 @@ export interface ManagedRun {
    * "waiting_consult"). Written once by executeRun's catch tail when a
    * CONSULT_PENDING error surfaces (generation 0; fields taken from the
    * error's payload). intervene() re-targets it to "main" (generation+1);
-   * applyReviewChain records the review's summary on it; resolveConsult
-   * journals the outcome under it and clears it before resuming. Persisted
+   * resolveConsult merges the review chain's summary into it when journaling
+   * the outcome, then clears it before resuming. Persisted
    * with the run so a waiting_consult run survives a cold restart. Shape
    * shared with PersistedRunState via run-persistence's PendingConsult.
+   *
+   * Manager-side extension `revisedPath`: set by a confirm-mode review chain
+   * to the suggestion file it wrote (the file is referenced only by the
+   * consult-review-ready payload). Carried verbatim through the generic
+   * writeRunToDisk save path, so the on-disk copy knows the file too;
+   * resolveConsult/stop()/markConsultFailed/deleteRun rmSync it (force:true)
+   * when the pending consult goes away.
    */
-  pendingConsult?: PendingConsult;
+  pendingConsult?: ManagerPendingConsult;
   controller: AbortController;
   startedAt: Date;
   /** The real script, kept so the run can be resumed. */
@@ -105,6 +149,16 @@ export interface ManagedRun {
    * Undefined means eligible (default-on); false opts out.
    */
   autoResume?: boolean;
+  /**
+   * How many times this run's consult outcome has been applied automatically
+   * (apply: "auto" — no user confirmation). Run-level counter, incremented by
+   * the auto-review chain on each completed cycle (successful apply or
+   * markConsultFailed) and carried on the managed run so the generic
+   * writeRunToDisk path persists it — a resumed execution's next consult
+   * trigger re-reads it (via persistence) to enforce the cap. Mirrors
+   * PersistedRunState.consultAutoApplied.
+   */
+  consultAutoApplied?: number;
   /**
    * The run's resolved hard token budget (per-run value, else the manager
    * default), fixed at run start and carried through resume() — a resumed run
@@ -967,7 +1021,13 @@ export class WorkflowManager extends EventEmitter {
             runId: managed.runId,
             prompt: managed.pendingConsult?.prompt,
             opts: managed.pendingConsult?.opts,
+            // Delivery override (set only by intervene() re-targeting to
+            // "main"); absent on a fresh park, so conditionally spread to keep
+            // the payload shape stable for exact-equality consumers.
+            ...(managed.pendingConsult?.to !== undefined ? { to: managed.pendingConsult.to } : {}),
           });
+          // 裁定 1：链触发在 manager 内部（fire-and-forget，不阻塞 catch 尾）。
+          this.maybeStartReviewChain(managed);
         }
       } else if (managed.controller.signal.aborted) {
         // Deliberate stop/pause/delete. The abort rejection is the MECHANISM of
@@ -1205,6 +1265,10 @@ export class WorkflowManager extends EventEmitter {
         // "paused" event race (see UsageLimitScheduler) is still correct — this
         // is fixed at run-start and doesn't change over the run's lifetime.
         autoResume: managed.autoResume,
+        // Auto-review chain's completed-cycle counter (裁定 3) — carried on the
+        // managed run so the next consult trigger's cap check sees it. Absent
+        // until the first chain completion (undefined stays unpersisted).
+        ...(managed.consultAutoApplied !== undefined ? { consultAutoApplied: managed.consultAutoApplied } : {}),
         // Start-time execution context, re-read by resume() (see ManagedRun).
         tokenBudget: managed.tokenBudget,
         toolset: managed.toolset,
@@ -1336,7 +1400,7 @@ export class WorkflowManager extends EventEmitter {
     // answer (their prompt is the intervention itself, not a review reply).
     // A chain-supplied `summary` (applyReviewChain) is merged into the
     // pending consult BEFORE the outcome is built, so buildConsultOutcome()
-    // sees it.
+    // sees it (链应用 → applied:true + 链摘要 + 已应用脚本，双审查重要 2)。
     const buildEntry = (p: PendingConsult): JournalEntry | undefined => {
       const merged: PendingConsult =
         options?.summary !== undefined ? { ...p, summary: options.summary } : p;
@@ -1345,7 +1409,7 @@ export class WorkflowManager extends EventEmitter {
           index: merged.callIndex,
           runId: merged.journalPrefix.replace(/:$/, ""),
           hash: hashConsult(merged.prompt, merged.opts),
-          result: buildConsultOutcome(merged),
+          result: buildConsultOutcome(merged, options?.script),
         };
       }
       return undefined;
@@ -1353,21 +1417,31 @@ export class WorkflowManager extends EventEmitter {
 
     if (managed) {
       // Memory path: ONE synchronous critical section — the generation
-      // re-check, summary merge, journal append, pending clear, status flip
-      // and persist below run with no await between them, so no in-process
-      // writer can interleave. applyReviewChain's own check is a fast-fail;
-      // this re-check (against the snapshot the write is built from) is the
-      // authoritative one.
+      // re-check, summary merge, journal append, pending clear, status flip,
+      // chain increment and persist below run with no await between them, so
+      // no in-process writer can interleave. applyReviewChain's own check is
+      // a fast-fail; this re-check (against the snapshot the write is built
+      // from) is the authoritative one.
       if (expectedGeneration !== undefined && pending.generation !== expectedGeneration) {
         return false;
       }
+      const revisedPath = (pending as ManagerPendingConsult).revisedPath;
       const journalEntry = buildEntry(pending);
       if (journalEntry) managed.journal = [...managed.journal, journalEntry];
       delete managed.pendingConsult;
       managed.status = "paused";
+      // 重要 1：链应用（summary 标记）在临界区内递增 consultAutoApplied，并入同一
+      // 次 persistRun 的 save——不再在链的 await 返回后微任务落地，闭合「应用后
+      // 同步连打咨询读到陈旧计数」的竞态。用户 reply（无 summary）不递增。
+      if (options?.summary !== undefined) {
+        managed.consultAutoApplied = (managed.consultAutoApplied ?? 0) + 1;
+      }
       // Disk must carry paused + no pending + the journal entry BEFORE
       // resume() runs (resume()'s journal source is disk alone).
       this.persistRun(managed);
+      // 次要 2：pending 消亡即清建议文件（confirm 链保留的 tmp 只被该 pending
+      // 引用；失配 false 路径不删——pending 仍在等答复）。
+      if (revisedPath !== undefined) rmSync(revisedPath, { force: true });
     } else {
       // Disk-only cold-start path: no in-memory object to flip — flip the
       // persisted state directly (same lease-protected pattern as stop()'s
@@ -1393,14 +1467,18 @@ export class WorkflowManager extends EventEmitter {
         if (expectedGeneration !== undefined && latest.pendingConsult?.generation !== expectedGeneration) {
           return false;
         }
+        const revisedPath = (latest.pendingConsult as ManagerPendingConsult | undefined)?.revisedPath;
         const journalEntry = latest.pendingConsult ? buildEntry(latest.pendingConsult) : undefined;
         this.persistence.save({
           ...latest,
           status: "paused",
           pendingConsult: undefined,
           ...(journalEntry ? { journal: [...(latest.journal ?? []), journalEntry] } : {}),
+          // 重要 1：链应用在临界区内递增，并入同一次 save（磁盘分支同内存路径）。
+          ...(options?.summary !== undefined ? { consultAutoApplied: (latest.consultAutoApplied ?? 0) + 1 } : {}),
           updatedAt: new Date().toISOString(),
         });
+        if (revisedPath !== undefined) rmSync(revisedPath, { force: true });
       } finally {
         this.persistence.releaseRunLease(lease);
       }
@@ -1441,11 +1519,17 @@ export class WorkflowManager extends EventEmitter {
     const error = new WorkflowError(reason, WorkflowErrorCode.WORKFLOW_ABORTED, { recoverable: true });
     if (managed) {
       if (managed.status !== "waiting_consult") return;
+      const revisedPath = (pending as ManagerPendingConsult).revisedPath;
       if (journalEntry) managed.journal = [...managed.journal, journalEntry];
       delete managed.pendingConsult;
       managed.status = "failed";
       managed.error = error;
+      // 重要 1：失败也递增（裁定 3），且并入本次 persistRun 的同一次 save——
+      // 不再由链在 await 返回后单独 persistRun（闭合微任务竞态）。
+      managed.consultAutoApplied = (managed.consultAutoApplied ?? 0) + 1;
       this.persistRun(managed);
+      // 次要 2：pending 消亡即清建议文件。
+      if (revisedPath !== undefined) rmSync(revisedPath, { force: true });
       // Emit BEFORE recordTerminalRun(), mirroring executeRun()'s catch tail
       // (emit → persist → record). In the failed → resume → re-terminal
       // scenario the runId is already in the terminal queue; recordTerminalRun's
@@ -1459,13 +1543,17 @@ export class WorkflowManager extends EventEmitter {
       const lease = this.persistence.acquireRunLease(runId);
       if (!lease) return;
       try {
+        const revisedPath = (persisted.pendingConsult as ManagerPendingConsult | undefined)?.revisedPath;
         this.persistence.save({
           ...persisted,
           status: "failed",
           pendingConsult: undefined,
           ...(journalEntry ? { journal: [...(persisted.journal ?? []), journalEntry] } : {}),
+          // 重要 1：失败也递增，并入同一次 save（磁盘分支同内存路径）。
+          consultAutoApplied: (persisted.consultAutoApplied ?? 0) + 1,
           updatedAt: new Date().toISOString(),
         });
+        if (revisedPath !== undefined) rmSync(revisedPath, { force: true });
       } finally {
         this.persistence.releaseRunLease(lease);
       }
@@ -1613,6 +1701,264 @@ export class WorkflowManager extends EventEmitter {
   }
 
   /**
+   * 裁定 1：consult-pending 后的链触发分流——在 manager 内部决定是否派生自动审阅链
+   * （fire-and-forget，不阻塞 catch 尾）。投递目标取 `to ?? opts.to`（intervene 的
+   * 改投覆盖优先）：to:"main" 不启动（人工答复走 workflow_control）；apply:"confirm"
+   * 启动但只产出建议（裁定 4，不应用）；apply 缺省归一为 "auto"（规格 §1；双审查
+   * 关键 1：省略 apply 必须照常启动链——否则 to:agent 咨询三路皆空永久挂起），
+   * 且 consultAutoApplied 未超上限（递增前 > 5 判定）时启动；超限回落
+   * waiting_consult + 发射 consult-limit（人工兜底）。
+   */
+  private maybeStartReviewChain(managed: ManagedRun): void {
+    const pc = managed.pendingConsult;
+    if (!pc || (pc.to ?? pc.opts.to) === "main") return;
+    const apply = pc.opts.apply ?? "auto"; // 关键 1：规格 §1 缺省 "auto"
+    if (apply === "confirm") {
+      void this.runAutoReviewChain(managed.runId).catch(() => {});
+      return;
+    }
+    const autoApplied = this.persistence.load(managed.runId)?.consultAutoApplied ?? 0;
+    if (autoApplied > 5) {
+      this.emitLive(managed, "consult-limit", { runId: managed.runId });
+      return;
+    }
+    void this.runAutoReviewChain(managed.runId).catch(() => {});
+  }
+
+  /**
+   * 自动审阅链（裁定 2-7 + 双审查修复）：在 manager 内部派生审阅子代理，产出修订
+   * 脚本（写入 tmp 文件）、链内校验（parseWorkflowScript）后经 applyReviewChain
+   * 应用；至多重试 1 次（反馈按失败原因分流：解析失败 / 缺文件 / 拒绝 / 调用异常，
+   * 双审查次要 3）。仍失败 → auto 模式 markConsultFailed（含恢复指引）；confirm 模式
+   * 保持 waiting_consult（双审查次要 1：confirm 链只是建议生成器，失败不 kill 整个
+   * run——标准咨询消息已在 park 时投递，用户仍可 reply）。
+   *
+   * consultAutoApplied 递增（重要 1）：移入 resolveConsult / markConsultFailed 的
+   * 临界区、与各自 persistRun 同一次 save——闭合「应用后同步连打咨询读到递增前
+   * 计数」的微任务竞态（上限绕过 + tmp 碰撞的根源）。
+   *
+   * 陈旧链判定（关键 2：代际数字会被 fresh park 回收为 0，纯 generation 比较会把
+   * 旧咨询 A 的修订误用到新咨询 B）——启动时捕获 pendingConsult 的**对象引用**
+   * pendingRef，每次触碰前校验 `managed.pendingConsult === pendingRef`：
+   * resolveConsult / intervene / re-park 均换对象，失配即陈旧 → rmSync tmp + 静默
+   * 丢弃；applyReviewChain 的 generation 检查作第二道防线（intervene 若原地突变
+   * 由它兜底）。
+   *
+   * tmp 生命周期（关键 3：confirm 保留的文件被同路径复用误读）——文件名带唯一
+   * nonce 杜绝跨链碰撞，且链启动时 rmSync(tmpPath, {force:true}) 清掉任何陈旧残留。
+   */
+  private async runAutoReviewChain(runId: string): Promise<void> {
+    const parked = this.runs.get(runId);
+    const pending = parked?.pendingConsult;
+    if (!parked || parked.status !== "waiting_consult" || !pending) return;
+    if ((pending.to ?? pending.opts.to) === "main") return;
+    // 关键 2：捕获对象引用（而非代际数字——数字会被 fresh park 回收）。
+    const pendingRef = pending as ManagerPendingConsult;
+    const generation = pending.generation;
+    const applyMode = pending.opts.apply ?? "auto"; // 关键 1：与触发点同步归一
+    const n = (this.persistence.load(runId)?.consultAutoApplied ?? 0) + 1;
+    // 关键 3：nonce 文件名 + 启动即清残留（跨链同路径复用误读的最后防线）。
+    // 复检 A P3（顺手加固）：nonce 用 randomUUID 替换 1ms 分辨率时间戳（理论碰撞）。
+    const tmpPath = join(tmpdir(), `consult-${runId}-${generation}-${n}-${randomUUID()}.js`);
+    rmSync(tmpPath, { force: true });
+    let lastFailure: { kind: ReviewFailureKind; detail: string } | undefined;
+
+    // 陈旧校验：resolve/intervene/re-park 均换对象；失配 → 丢弃（零状态触碰）。
+    const stale = (): boolean => {
+      const managed = this.runs.get(runId);
+      return !managed || managed.status !== "waiting_consult" || managed.pendingConsult !== pendingRef;
+    };
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const prompt = this.buildReviewPrompt(parked, pending, tmpPath, lastFailure);
+      let result: { ok: true; summary: string } | { ok: false; reason: string };
+      try {
+        result = await this.runReviewAgent(runId, prompt);
+      } catch (error) {
+        // 关键 4：runReviewAgent 异常（provider 错误等）不再被 fire-and-forget 吞掉
+        // 导致永久 waiting_consult + tmp 泄漏——按一次审阅失败处理（记 lastFailure
+        // 后走重试/失败路径）。
+        lastFailure = { kind: "error", detail: error instanceof Error ? error.message : String(error) };
+        continue;
+      }
+
+      // 审阅期间可能 stop()/intervene()/resolveConsult()/re-park——对象身份校验。
+      if (stale()) {
+        rmSync(tmpPath, { force: true });
+        return; // 陈旧结果：静默丢弃，不递增 consultAutoApplied
+      }
+      const managed = this.runs.get(runId)!;
+      // 裁定 5：审阅 token 已经 onUsage 累加进运行快照——超预算按失败路径处理
+      // （不重试：重试只会继续花费）。confirm 失败保持 waiting_consult（次要 1）。
+      const budget = managed.tokenBudget;
+      if (budget !== null && budget !== undefined && (managed.snapshot.tokenUsage?.total ?? 0) > budget) {
+        rmSync(tmpPath, { force: true });
+        if (applyMode !== "confirm") {
+          await this.markConsultFailed(
+            runId,
+            `自动审阅链 token 花费超出运行预算（${budget}）。请用 /workflows resume 带脚本恢复（咨询将重新挂起，届时可答复）`,
+          );
+        }
+        return;
+      }
+      if (!result.ok) {
+        lastFailure = { kind: "reject", detail: result.reason };
+        continue;
+      }
+      let revised: string;
+      try {
+        revised = readFileSync(tmpPath, "utf8");
+      } catch (error) {
+        lastFailure = { kind: "nofile", detail: String(error) };
+        continue;
+      }
+      try {
+        parseWorkflowScript(revised);
+      } catch (error) {
+        lastFailure = { kind: "parse", detail: String(error) };
+        continue;
+      }
+      if (applyMode === "confirm") {
+        // 裁定 4 + 次要 2：不应用——建议落 pendingConsult（revisedScript/summary/
+        // revisedPath），persistRun 后发射 consult-review-ready；tmp 保留到 pending
+        // 消亡（resolveConsult/stop/markConsultFailed/deleteRun 清理）。
+        managed.pendingConsult = {
+          ...managed.pendingConsult!,
+          revisedScript: revised,
+          summary: result.summary,
+          revisedPath: tmpPath,
+        };
+        this.persistRun(managed);
+        this.emitLive(managed, "consult-review-ready", { runId, summary: result.summary, revisedPath: tmpPath });
+        return;
+      }
+      // 关键 2 最后一道闸：apply 前再校验一次对象身份（applyReviewChain 的
+      // generation 检查兜底 intervene 原地突变场景——两道防线并存）。
+      if (stale()) {
+        rmSync(tmpPath, { force: true });
+        return;
+      }
+      await this.applyReviewChain(runId, { generation, script: revised, summary: result.summary });
+      // 成功应用/失配丢弃均由 applyReviewChain → resolveConsult 临界区统一裁决；
+      // consultAutoApplied +1 在 resolveConsult 内与 persistRun 同一次 save（重要 1）。
+      rmSync(tmpPath, { force: true });
+      return;
+    }
+    rmSync(tmpPath, { force: true });
+    // 复检 B 关键 2 残留：异常耗尽路径此前缺对象身份校验——catch 直接 continue、
+    // 循环耗尽后无条件 markConsultFailed。若末次尝试抛异常时用户已 reply（q1 收口
+    // → 恢复 → q2 fresh re-park，代际数字回收为 0）或 intervene（pending 换对象），
+    // markConsultFailed 的 status 守卫（waiting_consult 且 pending 存在）会通过，
+    // 陈旧链对 fresh 咨询落 settled:false journal、run 置 failed、发误导 error
+    // 事件、consultAutoApplied 误 +1。与正常返回路径一致：先 stale() 再落地失败态。
+    if (stale()) return;
+    if (applyMode !== "confirm") {
+      await this.markConsultFailed(
+        runId,
+        `审阅子代理未能产出可解析的修改后脚本：${lastFailure?.detail || "未知原因"}。请用 /workflows resume 带脚本恢复（咨询将重新挂起，届时可答复）`,
+      );
+    }
+    // confirm 模式重试耗尽：保持 waiting_consult（次要 1），用户仍可 reply。
+  }
+
+  /** 审阅子代理的系统指引（附加在任务 prompt 之前）。 */
+  private static readonly REVIEW_AGENT_INSTRUCTIONS =
+    "你是 workflow 脚本审阅者：审查脚本逻辑并产出修改后的完整脚本。必须把修改后的完整脚本用 write 工具写入任务指定的文件路径（一次性写全量，不要只写改动片段），并严格按任务要求的 JSON 格式返回结果。";
+
+  /**
+   * 组装审阅任务 prompt：运行快照摘要 + 当前脚本全文 + consult 咨询内容 +
+   * tmpPath 写入指示 + JSON 返回约定；第 2 次尝试附上次失败反馈（按原因分流——
+   * 双审查次要 3：parse 失败 / 缺文件 / 拒绝 / 调用异常各有独立文案，不再恒说
+   * 「未通过解析」）。
+   */
+  private buildReviewPrompt(
+    managed: ManagedRun,
+    pending: PendingConsult,
+    tmpPath: string,
+    failure?: { kind: ReviewFailureKind; detail: string },
+  ): string {
+    const snap = managed.snapshot;
+    const header =
+      `你是 workflow 脚本审阅者。运行 ${managed.runId} 在 consult() 咨询点暂停等待审阅。\n` +
+      `咨询内容：${pending.prompt}\n` +
+      `运行摘要：${snap.name}${snap.phases.length > 0 ? `（阶段：${snap.phases.join("、")}）` : ""}` +
+      `，已完成 ${snap.doneCount}/${snap.agentCount} agents。\n` +
+      `当前脚本全文：\n\`\`\`js\n${managed.script}\n\`\`\`\n`;
+    const task =
+      `请审阅脚本并给出修改，把修改后的完整脚本写入文件 ${tmpPath}（用 write 工具一次性写全量）。\n` +
+      `完成后返回 JSON：{"ok": true, "summary": "修改摘要"}；若无法完成，返回 {"ok": false, "reason": "原因"}。`;
+    if (!failure) return `${header}\n${task}`;
+    const feedback =
+      failure.kind === "parse"
+        ? `上一次审阅产出的脚本未通过解析：\n${failure.detail}`
+        : failure.kind === "nofile"
+          ? `上一次审阅没有把修改后的完整脚本写入指定文件（读文件失败）：${failure.detail}`
+          : failure.kind === "reject"
+            ? `上一次审阅拒绝产出修订：${failure.detail}`
+            : `上一次审阅调用失败：${failure.detail}`;
+    return `${header}\n${task}\n\n${feedback}`;
+  }
+
+  /**
+   * 派生审阅子代理并执行一次审阅（裁定 2 的 runReviewAgent）。复用注入的 runner
+   * （this.agent，测试注入 mock）；缺省构建与 executeRun 同款配置的 WorkflowAgent
+   * （mainModel/modelRegistry/persistAgentSessions/syncHostTools/mcpServers/enableIrc/
+   * excludeTools；工具面 = 默认编码工具集——write 已在其中，workflow/workflow_control
+   * 经 DEFAULT_EXCLUDED_SUBAGENT_TOOLS 排除）。输出约定：把修改后完整脚本写入 prompt
+   * 指定的 tmpPath，返回 JSON {ok:true,summary} | {ok:false,reason}（宽松解析：非 JSON
+   * 文本按 ok 处理，脚本合法性由链内 parseWorkflowScript 把关）。token usage 经
+   * onUsage 回调实时累加进运行快照（裁定 5：有上报通道），预算校验由链执行。
+   */
+  private async runReviewAgent(
+    runId: string,
+    prompt: string,
+  ): Promise<{ ok: true; summary: string } | { ok: false; reason: string }> {
+    const runner = this.agent ?? this.defaultReviewAgent();
+    const raw = await runner.run(prompt, {
+      label: "consult-review",
+      sessionName: `workflow:${runId} consult review`,
+      instructions: WorkflowManager.REVIEW_AGENT_INSTRUCTIONS,
+      onUsage: (usage: AgentUsage) => {
+        // 审阅期间 run 可能被替换（人工答复 → resume）——只累加进当前 managed，
+        // 陈旧对象上的累加自然随 isCurrent() 防线丢弃。
+        const current = this.runs.get(runId);
+        if (current) this.accumulateTokenUsage(current, usage.total, usage);
+      },
+    });
+    const text = typeof raw === "string" ? raw : raw === undefined ? "" : JSON.stringify(raw);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = undefined;
+    }
+    // 宽松解析（类型守卫收窄后再读字段，不信任未校验形状）：{ok:false, reason}
+    // 视为审阅失败；其余（含非 JSON 文本）按成功处理，summary 取 summary 字段或原文。
+    if (isReviewReply(parsed) && parsed.ok === false) {
+      return { ok: false, reason: typeof parsed.reason === "string" ? parsed.reason : "审阅子代理未完成任务" };
+    }
+    const summary = isReviewReply(parsed) && typeof parsed.summary === "string" ? parsed.summary : text;
+    return { ok: true, summary };
+  }
+
+  /** 缺省审阅代理（懒构建一次；注入 runner 存在时永远用注入的）。 */
+  private defaultReviewAgentInstance?: WorkflowAgent;
+  private defaultReviewAgent(): Pick<WorkflowAgent, "run"> {
+    if (this.agent) return this.agent;
+    this.defaultReviewAgentInstance ??= new WorkflowAgent({
+      cwd: this.cwd,
+      mainModel: this.mainModel,
+      modelRegistry: this.modelRegistry,
+      persistAgentSessions: this.persistAgentSessions,
+      syncHostTools: this.syncHostTools,
+      mcpServers: this.mcpServers,
+      enableIrc: this.enableIrc,
+      excludeTools: this.excludeSubagentTools,
+    });
+    return this.defaultReviewAgentInstance;
+  }
+
+  /**
    * Pause a running workflow.
    */
   pause(runId: string): boolean {
@@ -1740,6 +2086,10 @@ export class WorkflowManager extends EventEmitter {
       // Carry the original opt-out forward across resumes; it's fixed at
       // run-start and persistRun() re-persists it on every subsequent write.
       autoResume: persisted.autoResume,
+      // Carry the auto-apply counter forward — the chain's increments land on
+      // the CURRENT managed and writeRunToDisk persists them, so a resumed
+      // execution's next consult trigger re-reads the accumulated total.
+      consultAutoApplied: persisted.consultAutoApplied,
       // Restore start-time execution context: the budget the run started with
       // (legacy runs without one resume unbudgeted — never re-apply the current
       // default to a run that predates it) and the toolset tag executeRun
@@ -1857,6 +2207,8 @@ export class WorkflowManager extends EventEmitter {
       // `runs` forever (no future tail to mark it eviction-eligible) — a
       // small leak in exactly the class this manager otherwise bounds.
       const hadNoPendingSettle = managed.status === "paused" || managed.status === "waiting_consult";
+      // 次要 2：pending 消亡即清建议文件（confirm 链保留的 tmp）。
+      const revisedPath = (managed.pendingConsult as ManagerPendingConsult | undefined)?.revisedPath;
       managed.controller.abort();
       managed.status = "aborted";
       // Spec §6: stop/rm explicitly clears the pending consult — an aborted
@@ -1866,6 +2218,7 @@ export class WorkflowManager extends EventEmitter {
       managed.pendingConsult = undefined;
       this.emit("stopped", { runId });
       this.persistRun(managed);
+      if (revisedPath !== undefined) rmSync(revisedPath, { force: true });
       this.releaseRunLease(managed);
       if (hadNoPendingSettle) this.recordTerminalRun(runId);
       return true;
@@ -1884,7 +2237,10 @@ export class WorkflowManager extends EventEmitter {
       // Spec §6: stop/rm explicitly clears the pending consult — the spread
       // would otherwise carry a waiting_consult prompt onto the aborted run
       // on disk.
+      const revisedPath = (persisted.pendingConsult as ManagerPendingConsult | undefined)?.revisedPath;
       this.persistence.save({ ...persisted, status: "aborted", pendingConsult: undefined, updatedAt: new Date().toISOString() });
+      // 次要 2：pending 消亡即清建议文件。
+      if (revisedPath !== undefined) rmSync(revisedPath, { force: true });
     } finally {
       this.persistence.releaseRunLease(lease);
     }
@@ -1946,8 +2302,15 @@ export class WorkflowManager extends EventEmitter {
   deleteRun(runId: string): boolean {
     const managed = this.runs.get(runId);
     if (managed) {
+      // 次要 2（对齐扩展）：run 删除即清 pending 引用着的建议文件。
+      const revisedPath = (managed.pendingConsult as ManagerPendingConsult | undefined)?.revisedPath;
       if (!managed.controller.signal.aborted) managed.controller.abort();
       this.releaseRunLease(managed);
+      if (revisedPath !== undefined) rmSync(revisedPath, { force: true });
+    } else {
+      const persisted = this.persistence.load(runId);
+      const revisedPath = (persisted?.pendingConsult as ManagerPendingConsult | undefined)?.revisedPath;
+      if (revisedPath !== undefined) rmSync(revisedPath, { force: true });
     }
     this.runs.delete(runId);
     // Cancel any pending throttled write so a deferred persist can't fire after

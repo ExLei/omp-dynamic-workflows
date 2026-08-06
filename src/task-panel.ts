@@ -356,14 +356,19 @@ export function installResultDelivery(
       runId,
       prompt,
       opts,
+      to,
     }: {
       runId: string;
       prompt?: unknown;
       opts?: { to?: "agent" | "main"; apply?: "auto" | "confirm" };
+      /** 投递覆盖（intervene 改投 "main"）；投递分流读 to ?? opts.to（hash 身份仍走 opts）。 */
+      to?: "agent" | "main";
     }) => {
       if (!manager.getRun(runId)?.background) return;
-      if (opts?.to === "agent" && opts.apply !== "confirm") return;
+      // 规格 §7：consult 暂停无条件补投当前 phase 行——即使 to:agent 非 confirm
+      // （自动审阅链自治、不投咨询消息）也要先补投进度，否则该 run 的进度行丢失。
       flushPhaseRow(runId);
+      if ((to ?? opts?.to) === "agent" && opts?.apply !== "confirm") return;
       deliverWorkflowMessage(
         m.__holder?.pi ?? pi,
         runId,

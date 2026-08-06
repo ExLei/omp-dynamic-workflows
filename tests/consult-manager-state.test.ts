@@ -11,11 +11,13 @@ import { workflowProjectPaths } from "../src/workflow-paths.js";
 /**
  * A script that reaches a consult() intervention point on its very first call —
  * consult() throws CONSULT_PENDING synchronously, so the run settles through
- * executeRun's catch tail without ever calling the agent.
+ * executeRun's catch tail without ever calling the agent. to:"main"：纯 park
+ * 路径（不触发自动审阅链——apply 缺省归一 "auto" 后，to:"agent" 会启动链，本文件
+ * 无 mock 审阅执行器，必须用 to:"main" 保持「挂起等待」语义，见双审查关键 1）。
  */
 const CONSULT_SCRIPT =
   'export const meta = { name: "consult-probe", description: "consult state machine" };\n' +
-  'consult("q", { to: "agent" });\n' +
+  'consult("q", { to: "main" });\n' +
   "return 'unreachable';";
 
 /** Start the consult script on a fresh manager and settle it to waiting_consult. */
@@ -139,13 +141,16 @@ describe("waiting_consult state machine", () => {
         journalPrefix: `${runId}:`,
         callIndex: 0,
         prompt: "q",
-        opts: { to: "agent" },
+        opts: { to: "main" },
         generation: 0,
       });
       // A consult pause is a review gate, never a failure: no error event.
       expect(errors).toEqual([]);
       // 双审查发现 2：consult-pending 事件携带 opts（投递侧按 to/apply 分流）。
-      expect(consultPending).toEqual([{ runId, prompt: "q", opts: { to: "agent" } }]);
+      expect(consultPending).toEqual([{ runId, prompt: "q", opts: { to: "main" } }]);
+      // 卫生项 ③：to 覆盖仅在 intervene 改投后存在——新鲜 park 的 emit 不携带
+      // 多余的 to 键（条件展开，保持精确相等断言稳定）。
+      expect(consultPending[0]).not.toHaveProperty("to");
 
       // The waiting_consult state and pending consult survive a disk round-trip.
       const persisted = manager.getPersistence().load(runId);
@@ -154,7 +159,7 @@ describe("waiting_consult state machine", () => {
         journalPrefix: `${runId}:`,
         callIndex: 0,
         prompt: "q",
-        opts: { to: "agent" },
+        opts: { to: "main" },
         generation: 0,
       });
     } finally {
@@ -178,7 +183,7 @@ describe("waiting_consult state machine", () => {
           return Promise.reject(
             new WorkflowError("consult pending", WorkflowErrorCode.CONSULT_PENDING, {
               recoverable: false,
-              payload: { journalPrefix: `${runId}:`, callIndex: 0, prompt: "q", opts: { to: "agent" } },
+              payload: { journalPrefix: `${runId}:`, callIndex: 0, prompt: "q", opts: { to: "main" } },
             }),
           );
         },
