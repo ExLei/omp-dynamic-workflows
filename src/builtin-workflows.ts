@@ -67,7 +67,7 @@ function requireStringArray(value: unknown, argName: string, patternName: string
 export const BUILTIN_WORKFLOWS: readonly BuiltinWorkflowDescriptor[] = [
   {
     name: "deep-research",
-    description: "Research a question across the web with cross-checked sources. args: { question: string }.",
+    description: "跨网络研究一个问题，并交叉核对来源。args: { question: string }。",
     resolve(cwd, args) {
       requireNonEmptyString(asRecord(args).question, "question", "deep-research");
       return {
@@ -83,7 +83,7 @@ export const BUILTIN_WORKFLOWS: readonly BuiltinWorkflowDescriptor[] = [
   {
     name: "adversarial-review",
     description:
-      "Investigate a task, then cross-check each finding with skeptical reviewers. args: { task: string, reviewers?: number, threshold?: number }.",
+      "调查一个任务，再由持怀疑态度的审查者交叉核对每项发现。args: { task: string, reviewers?: number, threshold?: number }。",
     resolve(_cwd, args) {
       requireNonEmptyString(asRecord(args).task, "task", "adversarial-review");
       return { script: generateAdversarialReviewWorkflow() };
@@ -92,7 +92,7 @@ export const BUILTIN_WORKFLOWS: readonly BuiltinWorkflowDescriptor[] = [
   {
     name: "code-review",
     description:
-      "Multi-angle parallel code review: 7 specialized finders (correctness, reuse, simplification, efficiency, altitude) + verify pass → ranked findings. args: { diff: string, diffSource?: string }.",
+      "多角度并行代码审查：7 个专项发现器（正确性、复用、简化、效率、抽象层级）+ 验证阶段 → 排序后的发现。args: { diff: string, diffSource?: string }。",
     resolve(_cwd, args) {
       // Truncation past MAX_DIFF_CHARS already happens inside the generated
       // script at runtime (see code-review.ts); a caller invoking by name is
@@ -105,7 +105,7 @@ export const BUILTIN_WORKFLOWS: readonly BuiltinWorkflowDescriptor[] = [
   {
     name: "multi-perspective",
     description:
-      "Analyze a topic from several independent perspectives in parallel, then synthesize. args: { topic: string, perspectives?: string[] }.",
+      "并行从多个独立视角分析主题，然后综合。args: { topic: string, perspectives?: string[] }。",
     resolve(_cwd, args) {
       const record = asRecord(args);
       const topic = requireNonEmptyString(record.topic, "topic", "multi-perspective");
@@ -119,7 +119,7 @@ export const BUILTIN_WORKFLOWS: readonly BuiltinWorkflowDescriptor[] = [
   {
     name: "codebase-audit",
     description:
-      "Run parallel checks against a codebase scope, then cross-validate and report. args: { scope: string, checks: string[] }.",
+      "对代码库范围并行执行检查，然后交叉验证并报告。args: { scope: string, checks: string[] }。",
     resolve(_cwd, args) {
       const record = asRecord(args);
       const scope = requireNonEmptyString(record.scope, "scope", "codebase-audit");

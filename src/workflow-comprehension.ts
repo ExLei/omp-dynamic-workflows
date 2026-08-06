@@ -39,19 +39,19 @@ export const COMPREHENSION_SCENARIOS: readonly ComprehensionScenario[] = [
     id: "full-edit",
     suite: ComprehensionSuite.FULL,
     kind: ComprehensionTaskKind.EDIT,
-    prompt: `${ENVELOPE}\nEdit the workflow below. It must declare and enter a phase with a positive phase budget, ask one preparation agent, then invoke the saved workflow named child-workflow sequentially for alpha and beta with workflow( and return both child results. Consult any installed skill that applies.\n\nCurrent workflow:\nexport const meta = { name: "nested", description: "broken" }\nreturn await workflow("child-workflow", { id: "alpha" })`,
+    prompt: `${ENVELOPE}\nEdit the workflow below. It must declare and enter a phase with a positive phase budget, ask one preparation agent, then invoke the saved workflow named child-workflow sequentially for alpha and beta with workflow( and return both child results. Consult any installed skill that applies.\n\nCurrent workflow:\nexport const meta = { name: "nested", description: "损坏" }\nreturn await workflow("child-workflow", { id: "alpha" })`,
   },
   {
     id: "full-review",
     suite: ComprehensionSuite.FULL,
     kind: ComprehensionTaskKind.REVIEW,
-    prompt: `${ENVELOPE}\nReview and correct the workflow below. The corrected workflow must adversarially verify an agent-produced claim with exactly three reviewers, an inclusive threshold of 0.6, and source/logic lenses cycled across reviewers. One deterministic reviewer may fail. Return the claim plus the helper's complete verdict unchanged so successful-vote counts and missing review coverage remain visible. Consult any installed skill that applies.\n\nCurrent workflow:\nexport const meta = { name: "review", description: "broken" }\nconst claim = await agent("claim")\nreturn claim`,
+    prompt: `${ENVELOPE}\nReview and correct the workflow below. The corrected workflow must adversarially verify an agent-produced claim with exactly three reviewers, an inclusive threshold of 0.6, and source/logic lenses cycled across reviewers. One deterministic reviewer may fail. Return the claim plus the helper's complete verdict unchanged so successful-vote counts and missing review coverage remain visible. Consult any installed skill that applies.\n\nCurrent workflow:\nexport const meta = { name: "review", description: "损坏" }\nconst claim = await agent("claim")\nreturn claim`,
   },
   {
     id: "full-debug",
     suite: ComprehensionSuite.FULL,
     kind: ComprehensionTaskKind.DEBUG,
-    prompt: `${ENVELOPE}\nDebug and correct the workflow below. Use a bounded control helper (retry or gate), with at most three attempts. Require structured agent output with the fields acceptable (boolean) and answer (string), retry when acceptable is false, and return the accepted agent result plus attempt outcome. The deterministic first result is unacceptable and the next is acceptable. Consult any installed skill that applies.\n\nCurrent workflow:\nexport const meta = { name: "debug", description: "broken" }\nwhile (true) await agent("try")`,
+    prompt: `${ENVELOPE}\nDebug and correct the workflow below. Use a bounded control helper (retry or gate), with at most three attempts. Require structured agent output with the fields acceptable (boolean) and answer (string), retry when acceptable is false, and return the accepted agent result plus attempt outcome. The deterministic first result is unacceptable and the next is acceptable. Consult any installed skill that applies.\n\nCurrent workflow:\nexport const meta = { name: "debug", description: "损坏" }\nwhile (true) await agent("try")`,
   },
   {
     id: "full-loop",
@@ -438,7 +438,7 @@ export async function runComprehensionScenario(
       persistLogs: false,
       args: { work: [{ id: "alpha" }, { id: "beta" }], phaseBudget: 100 },
       loadSavedWorkflow: () =>
-        `export const meta = { name: "comprehension_child", description: "deterministic child" }\nconst value = await agent("child:" + args.id, { label: "child:" + args.id })\nreturn { id: args.id, value }`,
+        `export const meta = { name: "comprehension_child", description: "确定性子流程" }\nconst value = await agent("child:" + args.id, { label: "child:" + args.id })\nreturn { id: args.id, value }`,
       onRuntimeEvent: (event) => events.push({ ...event, index: timelineIndex++ }),
       onAgentStart: ({ label, phase, prompt }) => {
         calls.push({

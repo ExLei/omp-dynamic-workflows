@@ -60,11 +60,11 @@ export function createWebSearchTool(): ToolDefinition {
   return defineTool({
     name: "web_search",
     label: "Web Search",
-    description: "Search the web and return a list of result URLs and titles. Use before web_fetch to find sources.",
-    promptSnippet: "Search the web for sources",
+    description: "搜索网络并返回结果 URL 与标题列表。在调用 web_fetch 之前用它来查找来源。",
+    promptSnippet: "搜索网络查找来源",
     parameters: Type.Object({
-      query: Type.String({ description: "The search query." }),
-      count: Type.Optional(Type.Number({ description: "Max results (default 6)." })),
+      query: Type.String({ description: "搜索关键词。" }),
+      count: Type.Optional(Type.Number({ description: "最大结果数（默认 6）。" })),
     }),
     async execute(_id, params: { query: string; count?: number }) {
       const limit = Math.min(Math.max(params.count ?? 6, 1), 10);
@@ -90,10 +90,10 @@ export function createWebFetchTool(maxChars = 6000): ToolDefinition {
   return defineTool({
     name: "web_fetch",
     label: "Web Fetch",
-    description: "Fetch a URL and return its readable text content (HTML stripped, truncated).",
-    promptSnippet: "Fetch a URL's text",
+    description: "抓取一个 URL 并返回其可读文本内容（去除 HTML 并截断）。",
+    promptSnippet: "抓取 URL 的文本内容",
     parameters: Type.Object({
-      url: Type.String({ description: "The absolute URL to fetch." }),
+      url: Type.String({ description: "要抓取的绝对 URL。" }),
     }),
     async execute(_id, params: { url: string }) {
       try {

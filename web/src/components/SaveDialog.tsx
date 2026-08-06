@@ -74,8 +74,7 @@ export function SaveDialog() {
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
                         <span className="text-[13px]">
-                          {option.label === "Project" ? "项目级" : "个人级"}
-                          <span className="ml-1 text-ink-300">{option.label}</span>
+                          {option.location === "project" ? "项目级" : "个人级"}
                         </span>
                         {overwrite && (
                           <span className="rounded bg-busy/15 px-1 text-[10px] text-busy">已存在 · 覆盖</span>
@@ -93,7 +92,7 @@ export function SaveDialog() {
           </div>
 
           <p className="text-[11px] text-ink-300">
-            保存后立即注册为斜杠命令 <span className="text-accent">/{dialog.name || "name"}</span>
+            保存后立即注册为斜杠命令 <span className="text-accent">/{dialog.name || "名称"}</span>
             ;同名时项目级覆盖个人级,并遮蔽同名内置模式。
           </p>
         </div>

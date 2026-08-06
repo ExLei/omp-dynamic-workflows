@@ -59,6 +59,11 @@ export default function extension(pi: ExtensionAPI) {
     concurrency: settings.defaultConcurrency,
     defaultAgentRetries: settings.defaultAgentRetries,
     persistAgentSessions: settings.persistAgentSessions,
+    // 稀疏归一化后必须 ?? 兜底：syncHostTools 缺省 true、mcpServers 缺省 []、
+    // enableIrc 缺省 false（见 workflow-settings.ts normalizeSettings）。
+    syncHostTools: settings.syncHostTools ?? true,
+    mcpServers: settings.mcpServers ?? [],
+    enableIrc: settings.enableIrc ?? false,
   };
   const runtimeClaim = claimWorkflowRuntime(cwd);
   const previousRuntime = runtimeClaim.compatible;

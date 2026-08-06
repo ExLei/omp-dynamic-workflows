@@ -15,6 +15,27 @@ export const STATUS_COLOR: Record<string, string> = {
   aborted: "var(--color-bad)",
 };
 
+export const STATUS_LABEL: Record<string, string> = {
+  running: "运行中",
+  pending: "等待中",
+  queued: "排队中",
+  skipped: "已跳过",
+  paused: "已暂停",
+  done: "已完成",
+  completed: "已完成",
+  error: "错误",
+  failed: "失败",
+  aborted: "已中止",
+};
+
+export function statusLabel(status: string | undefined): string {
+  return status ? (STATUS_LABEL[status] ?? status) : "—";
+}
+
+export function locationLabel(location: string): string {
+  return location === "project" ? "项目级" : "个人级";
+}
+
 export function StatusDot({ status, pulse }: { status: AgentStatus | RunStatus | string; pulse?: boolean }) {
   return (
     <span

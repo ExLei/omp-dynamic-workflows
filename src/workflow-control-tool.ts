@@ -27,12 +27,12 @@ function buildWorkflowControlSchema() {
           Type.Literal("resume"),
           Type.Literal("stop"),
         ],
-        { description: "list = all runs (no runId); status/pause/resume/stop act on one run and require runId." },
+        { description: "list = 所有运行（无需 runId）；status/pause/resume/stop 作用于单个运行并需要 runId。" },
       ),
       runId: Type.Optional(
         Type.String({
           minLength: 1,
-          description: "Canonical workflow run ID. Required for status, pause, resume, and stop; omit for list.",
+          description: "规范的工作流运行 ID。status、pause、resume、stop 需要；list 省略。",
         }),
       ),
     },
@@ -83,11 +83,11 @@ export function createWorkflowControlTool(
     name: "workflow_control",
     label: "Workflow Control",
     description:
-      "List and inspect workflow runs, or pause, resume, and stop them without asking the user to run slash commands.",
-    promptSnippet: "Inspect and manage workflow runs directly by canonical run ID.",
+      "列出并查看工作流运行，或暂停、恢复、停止它们，无需用户执行斜杠命令。",
+    promptSnippet: "直接按规范 run ID 查看和管理工作流运行。",
     promptGuidelines: [
-      "Use workflow_control for workflow lifecycle management; do not ask the user to type /workflows when this tool can perform the action.",
-      "Use stop to terminate or quit a run. Closing the navigator does not stop a run.",
+      "用 workflow_control 管理工作流生命周期；当此工具能完成操作时，不要让用户输入 /workflows。",
+      "用 stop 终止或退出运行。关闭导航器不会停止运行。",
     ],
     parameters: workflowControlSchema(),
     prepareArguments: normalizeInput,

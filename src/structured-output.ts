@@ -24,11 +24,11 @@ export function createStructuredOutputTool<TSchemaDef extends TSchema>({
   return defineTool<TSchemaDef, Static<TSchemaDef>>({
     name,
     label: "Structured Output",
-    description: "Return the final machine-readable result for this subagent task.",
-    promptSnippet: "Return final machine-readable output",
+    description: "返回本次子代理任务的最终机器可读结果。",
+    promptSnippet: "返回最终的结构化机器可读输出",
     promptGuidelines: [
-      `${name} is the final answer channel for this task; call ${name} exactly once when done.`,
-      `Do not write a prose final answer after calling ${name}.`,
+      `${name} 是本次任务的最终答案通道；任务完成时恰好调用一次 ${name}。`,
+      `调用 ${name} 之后不要再写散文式最终回答。`,
     ],
     parameters: schema,
     async execute(_toolCallId, params) {

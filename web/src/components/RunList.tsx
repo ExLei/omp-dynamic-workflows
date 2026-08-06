@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { BookMarked, Boxes } from "lucide-react";
 import { useStore } from "../store";
 import { SplitGroup, SplitHandle, SplitPane } from "./Split";
-import { fmtCost, fmtTokens, Panel, StatusDot } from "./ui";
+import { fmtCost, fmtTokens, locationLabel, Panel, StatusDot, statusLabel } from "./ui";
 
 export function RunList() {
   const runs = useStore((s) => s.runs);
@@ -33,12 +33,12 @@ export function RunList() {
                   <div className="flex items-center gap-2">
                     <StatusDot status={run.status} pulse />
                     <span className="truncate font-mono text-[13px]">{run.name}</span>
-                    <span className="ml-auto font-mono text-[11px] text-ink-300">{run.status}</span>
+                    <span className="ml-auto font-mono text-[11px] text-ink-300">{statusLabel(run.status)}</span>
                   </div>
                   <div className="mt-0.5 font-mono text-[11px] text-ink-300">
-                    {run.doneCount}/{run.agentCount} agents
-                    {run.errorCount > 0 && <span className="text-bad"> · {run.errorCount} err</span>} ·{" "}
-                    {fmtTokens(run.tokens)} tok {fmtCost(run.cost)}
+                    {run.doneCount}/{run.agentCount} 个 agent
+                    {run.errorCount > 0 && <span className="text-bad"> · {run.errorCount} 错误</span>} ·{" "}
+                    {fmtTokens(run.tokens)} token {fmtCost(run.cost)}
                   </div>
                   {run.currentPhase && (
                     <div className="truncate font-mono text-[11px] text-accent/80">▸ {run.currentPhase}</div>
@@ -64,7 +64,7 @@ export function RunList() {
                 >
                   <BookMarked className="size-3 text-accent" />
                   <span className="truncate font-mono text-[13px]">/{entry.name}</span>
-                  <span className="ml-auto text-[11px] text-ink-300">{entry.location}</span>
+                  <span className="ml-auto text-[11px] text-ink-300">{locationLabel(entry.location)}</span>
                 </button>
               </li>
             ))}

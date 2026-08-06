@@ -167,7 +167,7 @@ export function registerWorkflowTriggerCommand(
   settingsStore: WorkflowSettingsStore = DEFAULT_SETTINGS_STORE,
 ): void {
   pi.registerCommand?.("workflows-trigger", {
-    description: "Keyword workflow trigger: on | off | set <word> | reset | status",
+    description: "关键词工作流触发：on | off | set <词> | reset | status",
     async handler(args: string, _ctx: ExtensionCommandContext) {
       const raw = args.trim();
       const [command = "status", ...rest] = raw.split(/\s+/);
@@ -179,8 +179,8 @@ export function registerWorkflowTriggerCommand(
         const saved = persistWorkflowTriggerSettings(settingsStore, { keywordTriggerEnabled: true });
         await say(
           saved
-            ? `Workflows keyword trigger on — mentioning ${triggerDisplayName(state.keywordTriggerWord)} in an interactive message will auto-arm workflows mode. Saved for new sessions.`
-            : "Workflows keyword trigger on for this session, but the preference could not be saved.",
+            ? `工作流关键词触发已开启 — 在交互消息中提及 ${triggerDisplayName(state.keywordTriggerWord)} 将自动启用工作流模式。已保存到新会话。`
+            : "工作流关键词触发已为本会话开启，但偏好未能保存。",
         );
         return;
       }
@@ -191,8 +191,8 @@ export function registerWorkflowTriggerCommand(
         const saved = persistWorkflowTriggerSettings(settingsStore, { keywordTriggerEnabled: false });
         await say(
           saved
-            ? `Workflows keyword trigger off — messages can mention ${triggerDisplayName(state.keywordTriggerWord)} without forcing the workflow tool. Saved for new sessions. Use /workflows-trigger on to restore.`
-            : "Workflows keyword trigger off for this session, but the preference could not be saved. Use /workflows-trigger on to restore.",
+            ? `工作流关键词触发已关闭 — 消息可提及 ${triggerDisplayName(state.keywordTriggerWord)} 而不会强制调用工作流工具。已保存到新会话。使用 /workflows-trigger on 恢复。`
+            : "工作流关键词触发已为本会话关闭，但偏好未能保存。使用 /workflows-trigger on 恢复。",
         );
         return;
       }
@@ -201,7 +201,7 @@ export function registerWorkflowTriggerCommand(
         const keywordTriggerWord = normalizeKeywordTriggerWord(requested);
         if (!keywordTriggerWord) {
           await say(
-            'Invalid trigger word. Use a non-empty term with no spaces and no leading "/", e.g. /workflows-trigger set pi-workflow',
+            '无效的触发词。请使用不含空格且不以 "/" 开头的非空词，例如 /workflows-trigger set pi-workflow',
           );
           return;
         }
@@ -210,8 +210,8 @@ export function registerWorkflowTriggerCommand(
         const saved = persistWorkflowTriggerSettings(settingsStore, { keywordTriggerWord });
         await say(
           saved
-            ? `Workflows keyword trigger word set to "${keywordTriggerWord}". Saved for new sessions.`
-            : `Workflows keyword trigger word set to "${keywordTriggerWord}" for this session, but the preference could not be saved.`,
+            ? `工作流关键词触发词已设置为 "${keywordTriggerWord}"。已保存到新会话。`
+            : `工作流关键词触发词已为本会话设置为 "${keywordTriggerWord}"，但偏好未能保存。`,
         );
         return;
       }
@@ -223,14 +223,14 @@ export function registerWorkflowTriggerCommand(
         });
         await say(
           saved
-            ? 'Workflows keyword trigger word reset to "workflow" (also matches "workflows"). Saved for new sessions.'
-            : 'Workflows keyword trigger word reset to "workflow" for this session, but the preference could not be saved.',
+            ? '工作流关键词触发词已重置为 "workflow"（也匹配 "workflows"）。已保存到新会话。'
+            : '工作流关键词触发词已为本会话重置为 "workflow"，但偏好未能保存。',
         );
         return;
       }
       const keywordTriggerWord = resolvedTriggerWord(state.keywordTriggerWord);
       await say(
-        `Workflows keyword trigger is ${state.keywordTriggerEnabled ? "on" : "off"}; trigger word is "${keywordTriggerWord}". Changes are saved for new sessions. Usage: /workflows-trigger on | off | set <word> | reset | status`,
+        `工作流关键词触发当前为 ${state.keywordTriggerEnabled ? "on" : "off"}；触发词是 "${keywordTriggerWord}"。更改会保存到新会话。用法：/workflows-trigger on | off | set <词> | reset | status`,
       );
     },
   });
@@ -248,7 +248,7 @@ export function registerWorkflowProgressCommands(
   settingsStore: WorkflowSettingsStore = DEFAULT_SETTINGS_STORE,
 ): void {
   pi.registerCommand?.("workflows-progress", {
-    description: "Bottom progress panel: compact | detailed | status | max <N>",
+    description: "底部进度面板：compact | detailed | status | max <N>",
     async handler(args: string, _ctx: ExtensionCommandContext) {
       const trimmed = args.trim();
       const say = (content: string) => pi.sendMessage({ customType: "workflows-progress", content, display: true });
@@ -260,8 +260,8 @@ export function registerWorkflowProgressCommands(
         const saved = persistProgressSettings(settingsStore, { progressPanelMode: verb });
         await say(
           saved
-            ? `Workflow progress panel set to ${verb} — takes effect on the next render of a live run (no restart needed).`
-            : `Workflow progress panel set to ${verb} for this session, but the preference could not be saved.`,
+            ? `工作流进度面板已设为 ${verb} — 下次渲染实时运行生效（无需重启）。`
+            : `工作流进度面板已为本会话设为 ${verb}，但偏好未能保存。`,
         );
         return;
       }
@@ -269,27 +269,27 @@ export function registerWorkflowProgressCommands(
       if (verb === "max") {
         if (!rest) {
           await say(
-            `Detailed progress shows up to ${loadProgressMaxAgents(settingsStore)} agents per phase. Usage: /workflows-progress max <1-1000>`,
+            `详细进度每阶段最多显示 ${loadProgressMaxAgents(settingsStore)} 个子代理。用法：/workflows-progress max <1-1000>`,
           );
           return;
         }
         const n = Number.parseInt(rest, 10);
         if (!Number.isFinite(n) || n < 1) {
-          await say(`Invalid value "${rest}". Usage: /workflows-progress max <1-1000> (a whole number ≥ 1).`);
+          await say(`无效值 "${rest}"。用法：/workflows-progress max <1-1000>（≥ 1 的整数）。`);
           return;
         }
         const clamped = Math.min(1000, n);
         const saved = persistProgressSettings(settingsStore, { progressPanelMaxAgents: clamped });
         await say(
           saved
-            ? `Detailed progress now shows up to ${clamped} agents per phase.`
-            : `Set to ${clamped} for this session, but the preference could not be saved.`,
+            ? `详细进度现在每阶段最多显示 ${clamped} 个子代理。`
+            : `已为本会话设为 ${clamped}，但偏好未能保存。`,
         );
         return;
       }
 
       await say(
-        `Workflow progress panel is ${loadProgressMode(settingsStore)}, showing up to ${loadProgressMaxAgents(settingsStore)} agents per phase. Usage: /workflows-progress compact | detailed | status | max <N>`,
+        `工作流进度面板当前为 ${loadProgressMode(settingsStore)}，每阶段最多显示 ${loadProgressMaxAgents(settingsStore)} 个子代理。用法：/workflows-progress compact | detailed | status | max <N>`,
       );
     },
   });

@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AssistantMessage, Model, TextContent } from "@oh-my-pi/pi-ai";
+import type { MountedMCPToolRouteSource } from "@oh-my-pi/pi-coding-agent/session/session-tools";
 import {
   type CreateAgentSessionOptions,
   type ModelRegistry,
@@ -26,6 +28,41 @@ import {
   resolveTierModel,
 } from "./model-tier-config.js";
 import { createStructuredOutputTool, type StructuredOutputCapture } from "./structured-output.js";
+
+/**
+ * This plugin's extension entry (extensions/workflow.ts), derived from this
+ * module's own location so it is correct wherever the plugin is installed
+ * (dev checkout, `omp plugin install` plugins root, symlinked copy). Loading
+ * the plugin's own extension inside a subagent session would start its web
+ * console and register workflow tools there, so syncHostTools preloading must
+ * exclude it (see WorkflowAgent.resolveSubagentExtensionPaths).
+ */
+function pluginExtensionEntryPath(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "..", "extensions", "workflow.ts");
+}
+
+/** Normalize an extension path for identity comparison: realpath when it exists, else resolve, with `/` separators. */
+function normalizeExtensionPath(p: string): string {
+  try {
+    return realpathSync(p).replace(/\\/g, "/");
+  } catch {
+    return resolve(p).replace(/\\/g, "/");
+  }
+}
+
+/**
+ * True when a discovered extension path is this plugin's own entry. Exact
+ * normalized identity covers the normal install; a suffix match on the
+ * repo-relative entry ("extensions/workflow.ts") also catches copies or
+ * symlinked trees that reach the same file through a different root.
+ */
+function isOwnPluginExtensionPath(candidate: string, ownEntry: string): boolean {
+  const normalized = normalizeExtensionPath(candidate);
+  const own = normalizeExtensionPath(ownEntry);
+  if (normalized === own) return true;
+  const entrySuffix = relative(dirname(dirname(ownEntry)), ownEntry).replace(/\\/g, "/");
+  return normalized === entrySuffix || normalized.endsWith(`/${entrySuffix}`);
+}
 
 /**
  * Find a JSON object/array in free-form text: a fenced ```json block if present,
@@ -240,6 +277,17 @@ export interface WorkflowAgentOptions {
    * Default: false (current behavior).
    */
   persistAgentSessions?: boolean;
+  /**
+   * 子代理会话全量同步主代理扩展工具/技能（对应 settings.syncHostTools，默认 true）。
+   * 开启时子代理走 omp 官方父→子通道（技能快照 + 扩展发现），在子代理会话内
+   * 重新绑定本会话的扩展/技能；关闭时保持移植版原有隔离（禁用扩展发现、无 MCP、
+   * 无 IRC）。MCP 工具白名单过滤在任务 5（createAgentSession 后 applyActiveToolsByName）。
+   */
+  syncHostTools?: boolean;
+  /** MCP 白名单服务器名；undefined/[] = 不启用 MCP（enableMCP: length > 0）。 */
+  mcpServers?: string[];
+  /** 子代理会话启用 IRC（对应 settings.enableIrc，默认 false）。 */
+  enableIrc?: boolean;
 }
 
 // OMP accepts a ModelRegistry directly. Build one lazily from the same
@@ -563,6 +611,16 @@ export class WorkflowAgent {
   private readonly mainModel?: string;
   /** Shared registry from the host session, when provided. */
   private readonly sharedRegistry?: ModelRegistry;
+  /**
+   * 子代理会话全量同步主代理扩展工具/技能（settings.syncHostTools，默认 true）。
+   * 开启时 createAgentSession 走 omp 官方父→子通道（skills 快照 + 扩展发现），
+   * 子代理自己 loadExtensions 绑定本会话；关闭时保持移植版原有隔离。
+   */
+  private readonly syncHostTools: boolean;
+  /** MCP 白名单服务器名；空/缺省 = 不启用 MCP（enableMCP: length > 0）。 */
+  private readonly mcpServers: string[];
+  /** 子代理会话启用 IRC（settings.enableIrc，默认 false）。 */
+  private readonly enableIrc: boolean;
   /** Lazily built once; shares the SDK's agentDir/auth so resolved models are authed. */
   private registry?: ModelRegistry;
   /**
@@ -592,6 +650,9 @@ export class WorkflowAgent {
     this.instructions = options.instructions;
     this.mainModel = options.mainModel;
     this.sharedRegistry = options.modelRegistry;
+    this.syncHostTools = options.syncHostTools ?? true;
+    this.mcpServers = options.mcpServers ?? [];
+    this.enableIrc = options.enableIrc ?? false;
   }
 
   /**
@@ -608,6 +669,43 @@ export class WorkflowAgent {
       throw error;
     });
     return this.sharedSettingsPromise;
+  }
+
+  /**
+   * Resolve the extension paths a synced subagent session should preload,
+   * excluding this plugin's own entry (extensions/workflow.ts): loading it in a
+   * subagent session would start its web console and register workflow tools
+   * there. The SDK's `preloadedExtensionPaths` skips the child's own discovery
+   * scan, so passing the filtered list both forwards other extensions AND keeps
+   * the plugin out. Best-effort: a discovery failure degrades to no extensions
+   * ([] — which also suppresses any re-discovery inside createAgentSession),
+   * warned but never blocking the run.
+   */
+  private async resolveSubagentExtensionPaths(settings: Settings, agentDir: string): Promise<string[]> {
+    const ownEntry = pluginExtensionEntryPath();
+    try {
+      const paths = await host().discoverSessionExtensionPaths(
+        { disableExtensionDiscovery: false, additionalExtensionPaths: [] },
+        this.cwd,
+        settings,
+      );
+      const kept: string[] = [];
+      for (const path of paths) {
+        if (isOwnPluginExtensionPath(path, ownEntry)) {
+          console.debug(`[workflow] excluding own plugin extension from subagent session: ${path}`);
+        } else {
+          kept.push(path);
+        }
+      }
+      return kept;
+    } catch (error) {
+      console.warn(
+        `[workflow] extension discovery failed for subagent session (agentDir: ${agentDir}); continuing without extensions: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return [];
+    }
   }
 
   /**
@@ -811,6 +909,9 @@ export class WorkflowAgent {
       ...nativeToolNames,
       ...allCustomTools.map((tool) => tool.name),
     ].filter((name, index, names) => !deniedTools.has(name) && names.indexOf(name) === index);
+    // Shared subagent settings: used both for the session and to pre-discover
+    // the extension paths it should load (see resolveSubagentExtensionPaths).
+    const settings = this.sessionOptions.settings ?? (await this.getSharedSettings(agentDir));
     const { session } = await host().createAgentSession({
       ...this.sessionOptions,
       cwd: runCwd,
@@ -823,18 +924,39 @@ export class WorkflowAgent {
       agentId: this.sessionOptions.agentId ?? workflowAgentIdentity(options.label),
       agentDisplayName: this.sessionOptions.agentDisplayName ?? "sub",
       taskDepth: this.sessionOptions.taskDepth ?? 1,
-      settings: this.sessionOptions.settings ?? (await this.getSharedSettings(agentDir)),
+      settings,
       modelRegistry,
       customTools: allCustomTools,
-      // OMP's native restriction contract replaces Pi's resourceLoader and
-      // excludeTools hooks. No ambient extensions/MCP tools enter child sessions.
-      disableExtensionDiscovery: true,
-      extensions: [],
-      additionalExtensionPaths: [],
-      enableMCP: false,
-      enableIrc: false,
+      // syncHostTools：走 omp 官方父→子通道——子代理自己 loadExtensions 绑定本会话
+      // （技能快照 + 扩展发现），MCP 按白名单开关，IRC 按设置。关闭时保持移植版
+      // 原有隔离（禁用扩展发现、无技能/扩展/MCP/IRC 进入子代理会话）。
+      //
+      // restrictToolNames 必须为 false：true 会让 SDK 清空 extensionPaths（sdk.ts
+      // preloadedExtensionPaths 分支被跳过）和 registeredTools，preloadedExtensionPaths
+      // 与扩展工具全部失效。denylist 语义（workflow/workflow_control/excludeTools）
+      // 由 SDK 的 restrictToolNames 过滤改为创建会话后收敛（见下方 convergence）。
+      ...(this.syncHostTools
+        ? {
+            skills: [...host().getActiveSkills()],
+            disableExtensionDiscovery: false,
+            extensions: [] as never[],
+            additionalExtensionPaths: [],
+            preloadedExtensionPaths: await this.resolveSubagentExtensionPaths(settings, agentDir),
+            enableMCP: this.mcpServers.length > 0,
+            enableIrc: this.enableIrc,
+            // 保持子代理无 LSP，行为不漂移（移植版原本就未启用 LSP）。
+            enableLsp: false,
+            restrictToolNames: false,
+          }
+        : {
+            disableExtensionDiscovery: true,
+            extensions: [] as never[],
+            additionalExtensionPaths: [],
+            enableMCP: false,
+            enableIrc: false,
+            restrictToolNames: true,
+          }),
       toolNames,
-      restrictToolNames: true,
       allowRestrictedCustomTools: allCustomTools.length > 0,
       // Per-call model/thinking wins over injected defaults.
       ...(resolvedModel ? { model: resolvedModel } : {}),
@@ -846,6 +968,66 @@ export class WorkflowAgent {
         await sessionManager.setSessionName(options.sessionName, "user");
       } catch {
         // Naming is best-effort; never fail the run over it.
+      }
+    }
+
+    // Denylist convergence + MCP whitelist: with restrictToolNames: false the
+    // SDK no longer filters workflow/workflow_control/excludeTools out of the
+    // session's tool set. Restore the previous semantics here, before the first
+    // prompt, by dropping the denied names from the active set — and, in the
+    // SAME keep computation, drop every MCP tool whose server is not declared
+    // in settings.mcpServers. Also drop the SDK's hidden `goal` tool —
+    // registered whenever restrictToolNames is false, yet its own assembly
+    // filters it out of the requested names and it only activates in goal
+    // mode; resurrecting it via getAllToolNames() would advertise an invoke
+    // that always throws "Goal mode is not active". Best-effort — a failure
+    // must never abort the run; when MCP ownership cannot be determined the
+    // conservative default is to give no MCP tools at all.
+    if (this.syncHostTools) {
+      try {
+        const toolNames = session.getAllToolNames();
+        const denied = new Set(subagentExcludedTools(this.excludeTools));
+        const mcpServers = new Set(this.mcpServers);
+        // Enumerate MCP ownership through the session's public tool surface
+        // (AgentSession exposes no registry — SessionTools is a private field):
+        // getToolByName returns the registered tool objects, and MCP entries
+        // carry the SDK's route metadata as strings (mcpServerName/mcpToolName
+        // — the exact predicate collectMountedMCPToolRoutes applies, preserved
+        // through the MCPTool → adapter → extension-wrapper chain). The server
+        // name is the RAW config name; the `mcp__<sanitized_server>_<tool>`
+        // tool-name prefix holds a sanitized copy and must not be matched
+        // against config names.
+        let mcpServerByTool: ReadonlyMap<string, string> | null = null;
+        try {
+          const owned = new Map<string, string>();
+          for (const name of toolNames) {
+            const tool = session.getToolByName(name);
+            if (!tool) continue;
+            const route = tool as MountedMCPToolRouteSource;
+            if (typeof route.mcpServerName === "string" && typeof route.mcpToolName === "string") {
+              owned.set(name, route.mcpServerName);
+            }
+          }
+          mcpServerByTool = owned;
+        } catch (enumError) {
+          // 白名单不可判定 → 不给任何 MCP 工具（保守默认），denylist 收敛照常。
+          console.warn(
+            `[workflow] mcp whitelist enumeration failed: ${enumError instanceof Error ? enumError.message : String(enumError)}`,
+          );
+        }
+        const keep = toolNames.filter((name) => {
+          if (denied.has(name) || name === "goal") return false;
+          const server = mcpServerByTool?.get(name);
+          if (server !== undefined) return mcpServers.has(server);
+          // 枚举失败时按 SDK 自身的 MCP 命名约定（isMCPToolName）剥掉全部 MCP 工具。
+          if (mcpServerByTool === null && name.startsWith("mcp__")) return false;
+          return true;
+        });
+        await session.setActiveToolsByName(keep);
+      } catch (error) {
+        console.warn(
+          `[workflow] subagent tool convergence failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
 

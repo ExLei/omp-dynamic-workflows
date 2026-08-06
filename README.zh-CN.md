@@ -18,9 +18,12 @@ JavaScript —— `agent()`、`parallel()`、`pipeline()`、阶段、重试、�
 
 | | |
 |---|---|
-| omp | `@oh-my-pi/pi-coding-agent` ≥ 17.2.4（peer 依赖，另含 `pi-ai` / `pi-tui` / `pi-utils`） |
+| omp | `@oh-my-pi/pi-coding-agent` ≥ 17.2.4 且 < 17.3（peer 依赖，另含 `pi-ai` / `pi-tui` / `pi-utils`） |
 | bun | 插件安装与控制台构建 |
 | git | 仅 `isolation: "worktree"` 需要 |
+
+> 全局 omp **17.2.9 暂不兼容**（typebox shim API 变更，实测加载崩溃）。请锁定
+> **17.2.4**；peer 范围为 `>=17.2.4 <17.3`。
 
 ## 安装
 
@@ -277,7 +280,7 @@ return { ledger, synthesis };
 
 ### 保存
 
-`/workflows save <name> [runId] [project|user]`，或控制台的 Save 按钮，会把 `<name>.json` 写入所选作用域并
+`/workflows save <name> [runId] [project|user]`，或控制台的 Save 按钮，会把 `<name>.js` 写入所选作用域并
 立刻注册斜杠命令：
 
 | 作用域 | 路径 | 说明 |
@@ -432,7 +435,7 @@ bun run web:dev     # Vite 跑 :5178，把 /api 代理到 :7788
 |---|---|
 | `~/.omp/workflows/settings.json` | 用户设置 |
 | `~/.omp/workflows/model-tiers.json` | 模型分层 |
-| `~/.omp/workflows/saved/` | 个人已保存工作流（`<name>.json`） |
+| `~/.omp/workflows/saved/` | 个人已保存工作流（`<name>.js`） |
 | `~/.omp/workflows/projects/<basename>-<sha256[0:12]>/` | 机器本地、按 cwd 划分的根目录 |
 | `…/settings.json` | 项目设置覆盖 |
 | `…/runs/<runId>.json`（及 `.bak`、`.lock`、`.log`） | 运行状态（内嵌恢复 journal）、原子写备份、跨进程租约锁、可选文件日志 |

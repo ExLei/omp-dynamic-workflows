@@ -17,6 +17,12 @@ import { WORKFLOW_SAVED_DIR } from "./config.js";
 export const WORKFLOW_HOME_RELATIVE_DIR = ".omp/workflows";
 export const WORKFLOW_PROJECTS_SUBDIR = "projects";
 
+/** Test-only: override the machine home for path resolution (bun test isolation). */
+let homedirOverride: string | undefined;
+export function setHomedirForTests(dir: string | undefined): void {
+  homedirOverride = dir;
+}
+
 export interface WorkflowProjectPaths {
   key: string;
   rootDir: string;
@@ -29,7 +35,7 @@ export interface WorkflowProjectPaths {
 }
 
 export function workflowHomeDir(): string {
-  return join(homedir(), WORKFLOW_HOME_RELATIVE_DIR);
+  return join(homedirOverride ?? homedir(), WORKFLOW_HOME_RELATIVE_DIR);
 }
 
 export function workflowUserSavedDir(): string {

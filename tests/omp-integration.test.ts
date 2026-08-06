@@ -33,7 +33,7 @@ describe("OMP plugin contract", () => {
     expect([...extension.commands.keys()]).toEqual(
       expect.arrayContaining(["workflows", "workflows-models", "deep-research", "code-review", "effort"]),
     );
-    expect(extension.tools.get("workflow")?.definition.description).toContain("ONLY call it when the user explicitly opts in");
+    expect(extension.tools.get("workflow")?.definition.description).toContain("仅当用户显式选择使用工作流时才调用它");
   });
 
   test("Pi-only tool hooks are translated into OMP description and execution", async () => {

@@ -20,7 +20,7 @@ export interface DeepResearchConfig {
 export function generateDeepResearchWorkflow(): string {
   return `export const meta = {
   name: 'deep_research',
-  description: 'Deep research with real web search and cross-checked claims',
+  description: '深度研究：真实网络搜索 + 交叉核对的主张',
   phases: [
     { title: 'Queries' },
     { title: 'Gather' },
@@ -104,7 +104,7 @@ export function generateCodebaseAuditWorkflow(scope: string, checks: string[]): 
 
   return `export const meta = {
   name: 'codebase_audit',
-  description: ${JSON.stringify(`Codebase audit: ${displayScope}`)},
+  description: ${JSON.stringify(`代码库审计：${displayScope}`)},
   phases: [
     { title: 'Individual Checks' },
     { title: 'Cross-Validation' },

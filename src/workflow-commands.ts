@@ -38,9 +38,9 @@ const STATUS_ICON: Record<string, string> = {
 };
 
 const USAGE =
-  "Usage: /workflows [list] | run <prompt> | status <id> | watch <id> | stop <id> | pause <id> | resume <id> | rm <id> | save <name> [runId]";
+  "用法: /workflows [list] | run <提示> | status <id> | watch <id> | stop <id> | pause <id> | resume <id> | rm <id> | save <名称> [runId]";
 
-const RUN_USAGE = "Usage: /workflows run <prompt> — force a dynamic workflow from the prompt";
+const RUN_USAGE = "用法: /workflows run <提示> — 根据提示强制执行动态工作流";
 
 function summarizeRun(run: PersistedRunState): string {
   const icon = STATUS_ICON[run.status] ?? "?";
@@ -63,14 +63,64 @@ function oneLineProgress(snapshot: WorkflowSnapshot): string {
 }
 
 /**
- * Subscribe to a running run's events and stream live progress to the status bar,
- * printing the final snapshot when it finishes. Non-blocking: returns true if the
- * run was active and is now being watched, false otherwise. Listeners clean up on
+ * Subscribe to a running run's events and stream live progress, printing the
+ * final snapshot when it finishes. Non-blocking: returns true if the run was
+ * active and is now being watched, false otherwise. Listeners clean up on
  * completion so nothing leaks.
+ *
+ * With a UI the progress streams to the status bar; without one (ACP/headless)
+ * there is no status bar to push into, so one compact progress line is sent as
+ * a `workflow-watch` custom message every second instead, and the interval is
+ * cleared when the run settles (complete/error/stopped/paused). `rm` emits no
+ * final event, so the headless tick also self-cleans when the run's snapshot
+ * disappears — the timer never idles until session shutdown.
  */
 function watchRun(manager: WorkflowManager, pi: ExtensionAPI, ctx: ExtensionCommandContext, id: string): boolean {
   const active = manager.getRun(id);
   if (active?.status !== "running") return false;
+
+  // Headless/ACP sessions have no status bar. Stream one compact progress line
+  // per second as a custom message; stop and clear the interval on settle.
+  // Host-managed ctx.setInterval keeps throws contained, is unref'd, and is
+  // cleared automatically on session shutdown (runner.clearManagedTimers).
+  if (!ctx.hasUI) {
+    const finalEvents = ["complete", "error", "stopped", "paused"];
+    let settled = false;
+    let timer: Timer | undefined;
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      for (const ev of finalEvents) manager.off(ev, finish);
+      if (timer) ctx.clearTimer(timer);
+    };
+    const finish = (e: { runId?: string }) => {
+      if (e && e.runId !== id) return;
+      cleanup();
+      const run = manager.getRun(id);
+      if (run) {
+        void pi.sendMessage({
+          customType: "workflows",
+          content: renderWorkflowText(recomputeWorkflowSnapshot(run.snapshot), true),
+          display: true,
+        });
+      }
+    };
+    const emit = () => {
+      const snapshot = manager.getSnapshot(id);
+      if (!snapshot) {
+        // The run was removed (rm emits no final event): self-clean now so the
+        // timer does not idle until the session ends. `settled` also guards
+        // against re-entry from any event still in flight.
+        cleanup();
+        return;
+      }
+      pi.sendMessage({ customType: "workflow-watch", content: oneLineProgress(snapshot), display: true });
+    };
+    timer = ctx.setInterval(emit, 1000);
+    for (const ev of finalEvents) manager.on(ev, finish);
+    emit();
+    return true;
+  }
 
   const key = `wf:${id}`;
   const update = () => {
@@ -119,7 +169,7 @@ function renderPersistedStatus(run: PersistedRunState): string {
   return lines.join("\n");
 }
 
-export const SAVE_USAGE = "Usage: /workflows save <name> [runId] [project|user]";
+export const SAVE_USAGE = "用法: /workflows save <名称> [runId] [project|user]";
 
 function isSaveLocation(value: string): value is "project" | "user" {
   return value === "project" || value === "user";
@@ -141,11 +191,11 @@ async function pickSaveLocation(
   if (explicit) return explicit;
   const options = saveLocationOptions(cwd);
   const labels = options.map(
-    (o) => `${o.label}  ${o.display}${existing.includes(o.location) ? "  (overwrite)" : ""}`,
+    (o) => `${o.label}  ${o.display}${existing.includes(o.location) ? "  （覆盖）" : ""}`,
   );
   let choice: string | undefined;
   try {
-    choice = await ctx.ui.select(`Where should /${name} be saved?`, labels);
+    choice = await ctx.ui.select(`/${name} 保存到哪里？`, labels);
   } catch {
     return "project";
   }
@@ -178,8 +228,7 @@ export function registerWorkflowCommands(
   }
 
   pi.registerCommand("workflows", {
-    description:
-      "Manage workflow runs — no args (opens navigator) | run <prompt> | status/stop/pause/resume <id> | rm <id> | save <name> [runId] [project|user] | web [url]",
+    description: "工作流运行列表与控制：list/status/watch/pause/resume/stop/rm/run/save/web",
     async handler(args: string, ctx: ExtensionCommandContext) {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const sub = (parts[0] ?? "list").toLowerCase();
@@ -212,14 +261,14 @@ export function registerWorkflowCommands(
           // forcing directive (no "if it's a question just answer" escape),
           // distinct from the heuristic keyword/effort arming.
           const armed = buildForcedWorkflowPrompt(prompt, extra);
-          ctx.ui.notify(`Running workflow: ${prompt.slice(0, 60)}${prompt.length > 60 ? "…" : ""}`, "info");
+          ctx.ui.notify(`正在运行工作流：${prompt.slice(0, 60)}${prompt.length > 60 ? "…" : ""}`, "info");
           try {
             await pi.sendMessage(
               { customType: "workflow-run", content: armed, display: true },
               { triggerTurn: true, deliverAs: "followUp" },
             );
           } catch {
-            ctx.ui.notify("Could not start the workflow turn.", "error");
+            ctx.ui.notify("无法启动工作流回合。", "error");
           }
           return;
         }
@@ -229,18 +278,18 @@ export function registerWorkflowCommands(
           const url = opts.getWebConsoleUrl?.();
           if (!url) {
             ctx.ui.notify(
-              'Web console is not running. Set {"web":{"enabled":true}} in ~/.omp/workflows/settings.json, or run with OMP_WORKFLOW_WEB=1.',
+              'Web 控制台未运行。请在 ~/.omp/workflows/settings.json 中设置 {"web":{"enabled":true}}，或以 OMP_WORKFLOW_WEB=1 运行。',
               "warning",
             );
             return;
           }
           // Always print: the URL carries the per-process token, and a transient
           // notify is not something the user can scroll back to.
-          await print(`Workflow web console: ${url}`);
+          await print(`工作流 Web 控制台：${url}`);
           if ((parts[1] ?? "").toLowerCase() === "url") return;
           const { openInBrowser } = await import("./web-open.js");
           const opened = await openInBrowser(url);
-          if (!opened.ok) ctx.ui.notify(`Could not open a browser (${opened.reason}) — use the URL above.`, "warning");
+          if (!opened.ok) ctx.ui.notify(`无法打开浏览器（${opened.reason}）— 请使用上面的 URL。`, "warning");
           return;
         }
         case "ui":
@@ -257,10 +306,10 @@ export function registerWorkflowCommands(
           }
           const runs = manager.listRuns();
           if (!runs.length) {
-            await print("No workflow runs yet. Start one with a background workflow (background: true).");
+            await print("还没有工作流运行。用后台工作流启动一个（background: true）。");
             return;
           }
-          await print(["Workflow runs:", ...runs.map(summarizeRun), "", USAGE].join("\n"));
+          await print(["工作流运行：", ...runs.map(summarizeRun), "", USAGE].join("\n"));
           return;
         }
         case "watch":
@@ -269,10 +318,16 @@ export function registerWorkflowCommands(
             ctx.ui.notify(USAGE, "warning");
             return;
           }
-          // A running run streams live progress to the status bar and prints the
-          // final snapshot when it finishes — no need to re-run the command.
+          // A running run streams live progress (status bar, or text messages
+          // in headless sessions) and prints the final snapshot when it
+          // finishes — no need to re-run the command.
           if (watchRun(manager, pi, ctx, id)) {
-            ctx.ui.notify(`Watching ${id} — live progress in the status bar; result prints when it finishes.`, "info");
+            ctx.ui.notify(
+              ctx.hasUI
+                ? `正在观察 ${id} — 状态栏实时进度；结束后打印结果。`
+                : `正在观察 ${id} — 实时进度消息；结束后打印结果。`,
+              "info",
+            );
             return;
           }
           const live = manager.getSnapshot(id);
@@ -282,7 +337,7 @@ export function registerWorkflowCommands(
           }
           const run = manager.listRuns().find((r) => r.runId === id);
           if (!run) {
-            ctx.ui.notify(`No workflow run "${id}"`, "error");
+            ctx.ui.notify(`不存在工作流运行 "${id}"`, "error");
             return;
           }
           await print(renderPersistedStatus(run));
@@ -291,31 +346,31 @@ export function registerWorkflowCommands(
         case "stop": {
           if (!id) return ctx.ui.notify(USAGE, "warning");
           ctx.ui.notify(
-            manager.stop(id) ? `Stopped ${id}` : `Cannot stop ${id} (not running)`,
+            manager.stop(id) ? `已停止 ${id}` : `无法停止 ${id}（未在运行）`,
             manager.getRun(id) ? "info" : "warning",
           );
           return;
         }
         case "pause": {
           if (!id) return ctx.ui.notify(USAGE, "warning");
-          ctx.ui.notify(manager.pause(id) ? `Paused ${id}` : `Cannot pause ${id} (not running)`, "info");
+          ctx.ui.notify(manager.pause(id) ? `已暂停 ${id}` : `无法暂停 ${id}（未在运行）`, "info");
           return;
         }
         case "resume": {
           if (!id) return ctx.ui.notify(USAGE, "warning");
           const ok = await manager.resume(id);
-          ctx.ui.notify(ok ? `Resumed ${id}` : `Resume not available for ${id} yet`, ok ? "info" : "warning");
+          ctx.ui.notify(ok ? `已恢复 ${id}` : `${id} 暂不可恢复`, ok ? "info" : "warning");
           return;
         }
         case "rm": {
           if (!id) return ctx.ui.notify(USAGE, "warning");
-          ctx.ui.notify(manager.deleteRun(id) ? `Removed ${id}` : `No run ${id}`, "info");
+          ctx.ui.notify(manager.deleteRun(id) ? `已删除 ${id}` : `不存在运行 ${id}`, "info");
           return;
         }
         case "save": {
           const name = id;
           if (!name) return ctx.ui.notify(SAVE_USAGE, "warning");
-          if (!opts.storage) return ctx.ui.notify("Saving is not available (no storage configured)", "error");
+          if (!opts.storage) return ctx.ui.notify("保存不可用（未配置存储）", "error");
           const storage = opts.storage;
           const runs = manager.listRuns();
           // Trailing `project`/`user` selects the destination up front and skips
@@ -326,7 +381,7 @@ export function registerWorkflowCommands(
           // Pick the named run, else the most recent run that still has its script.
           const run = runIdArg ? runs.find((r) => r.runId === runIdArg) : runs.find((r) => r.script);
           if (!run?.script) {
-            ctx.ui.notify(runIdArg ? `No run ${runIdArg} with a script` : "No saved run to save", "error");
+            ctx.ui.notify(runIdArg ? `不存在带脚本的运行 ${runIdArg}` : "没有可保存的运行", "error");
             return;
           }
           // Ask where it goes, the way Claude Code does for project vs personal
@@ -344,12 +399,12 @@ export function registerWorkflowCommands(
           registerSavedWorkflow(pi, opts.cwd ?? process.cwd(), saved, undefined, () =>
             storage.list().some((w) => w.name === saved.name),
           );
-          const verb = existing.includes(location) ? "Updated" : "Saved";
-          ctx.ui.notify(`${verb} /${name} → ${saved.path} (from ${run.runId})`, "info");
+          const verb = existing.includes(location) ? "已更新" : "已保存";
+          ctx.ui.notify(`${verb} /${name} → ${saved.path}（来自 ${run.runId}）`, "info");
           return;
         }
         default:
-          ctx.ui.notify(`Unknown subcommand "${sub}". ${USAGE}`, "warning");
+          ctx.ui.notify(`未知子命令 "${sub}"。${USAGE}`, "warning");
       }
     },
   });

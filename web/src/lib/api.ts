@@ -25,7 +25,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "content-type": "application/json", "x-workflow-token": TOKEN, ...init?.headers },
   });
   const body = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error ?? `${response.status} ${response.statusText}`);
+  if (!response.ok) throw new Error(body.error ?? `请求失败(${response.status})`);
   return body;
 }
 

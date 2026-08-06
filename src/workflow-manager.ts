@@ -214,6 +214,15 @@ export interface WorkflowManagerOptions {
    */
   persistAgentSessions?: boolean;
   /**
+   * 子代理会话全量同步主代理扩展工具/技能（对应 settings.syncHostTools，默认 true）。
+   * 透传给 runWorkflow → WorkflowAgent，见 WorkflowAgentOptions.syncHostTools。
+   */
+  syncHostTools?: boolean;
+  /** MCP 白名单服务器名；undefined/[] = 不启用 MCP（enableMCP: length > 0）。 */
+  mcpServers?: string[];
+  /** 子代理会话启用 IRC（对应 settings.enableIrc，默认 false）。 */
+  enableIrc?: boolean;
+  /**
    * How many terminal (completed/failed/aborted) runs to retain full
    * in-memory state for before the oldest is evicted from `runs` (see the
    * class-level doc comment on that field). Defaults to
@@ -236,6 +245,9 @@ export type WorkflowManagerReloadOptions = Pick<
   | "toolsets"
   | "excludeSubagentTools"
   | "persistAgentSessions"
+  | "syncHostTools"
+  | "mcpServers"
+  | "enableIrc"
 >;
 
 /**
@@ -330,6 +342,9 @@ export class WorkflowManager extends EventEmitter {
   private toolsets?: Record<string, () => ToolDefinition[]>;
   private excludeSubagentTools?: string[];
   private persistAgentSessions: boolean;
+  private syncHostTools: boolean;
+  private mcpServers: string[];
+  private enableIrc: boolean;
 
   constructor(options: WorkflowManagerOptions = {}) {
     super();
@@ -346,6 +361,9 @@ export class WorkflowManager extends EventEmitter {
     this.toolsets = options.toolsets;
     this.excludeSubagentTools = options.excludeSubagentTools;
     this.persistAgentSessions = options.persistAgentSessions ?? false;
+    this.syncHostTools = options.syncHostTools ?? true;
+    this.mcpServers = options.mcpServers ?? [];
+    this.enableIrc = options.enableIrc ?? false;
     this.maxTerminalRunsInMemory = options.maxTerminalRunsInMemory ?? DEFAULT_MAX_TERMINAL_RUNS_IN_MEMORY;
     this.persistence = createRunPersistence(this.cwd);
     this.recoverStaleRuns();
@@ -396,6 +414,9 @@ export class WorkflowManager extends EventEmitter {
     this.toolsets = options.toolsets;
     this.excludeSubagentTools = options.excludeSubagentTools;
     this.persistAgentSessions = options.persistAgentSessions ?? false;
+    this.syncHostTools = options.syncHostTools ?? true;
+    this.mcpServers = options.mcpServers ?? [];
+    this.enableIrc = options.enableIrc ?? false;
   }
 
   /** Set the session's main model (provider/id). Used to auto-tier explore agents. */
@@ -649,6 +670,9 @@ export class WorkflowManager extends EventEmitter {
         mainModel: this.mainModel,
         modelRegistry: this.modelRegistry,
         persistAgentSessions: this.persistAgentSessions,
+        syncHostTools: this.syncHostTools,
+        mcpServers: this.mcpServers,
+        enableIrc: this.enableIrc,
         signal: managed.controller.signal,
         concurrency: resolvedConcurrency,
         agentRetries: resolvedAgentRetries,

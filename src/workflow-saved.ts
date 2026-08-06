@@ -1,19 +1,24 @@
 /**
  * Save and load reusable workflow commands.
+ *
+ * Saved workflows are Claude Code–compatible `.js` modules: a leading
+ * `export const meta = { name, description, parameters?, phases?, model? }`
+ * block followed by a blank line and the workflow body. Files are written as
+ * plain text (no JSON escaping), so a saved workflow doubles as an importable
+ * module and stays hand-editable. Legacy `.json` records are intentionally not
+ * read, written, or listed — there is no compatibility layer.
  */
 
 import { USER_WORKFLOW_SAVED_DIR, WORKFLOW_SAVED_DIR } from "./config.js";
 import { join } from "node:path";
 import {
   ensureDir as ensureDirFs,
-  listJsonFilesSafe,
   type PersistenceFsLayer,
-  readJsonWithBackupRecovery,
   resolvePersistenceFs,
   unlinkIfExistsSafe,
-  writeJsonAtomicWithBackup,
 } from "./fs-persistence.js";
 import { workflowProjectPaths, workflowUserSavedDir } from "./workflow-paths.js";
+import { parseWorkflowScript, type WorkflowMeta } from "./workflow.js";
 
 export interface SavedWorkflow {
   /** Command name (filename without extension). */
@@ -28,8 +33,11 @@ export interface SavedWorkflow {
   location: "project" | "user";
   /** Full file path. */
   path: string;
-  /** When it was saved. */
-  savedAt: string;
+  /**
+   * When it was saved. Set by `save()`; absent for workflows loaded from
+   * disk, because the `.js` format carries no timestamp.
+   */
+  savedAt?: string;
 }
 
 export interface WorkflowStorage {
@@ -94,9 +102,10 @@ export function createWorkflowStorage(cwd: string, fsOverride?: Partial<Persiste
   const fs = resolvePersistenceFs(fsOverride);
   const paths = workflowProjectPaths(cwd);
   const projectDir = paths.projectSavedDir;
-  // Project workflows written by an older build still live under the user's
-  // home namespace; read them so an upgrade doesn't hide them, but never write
-  // there again (save() targets the in-project directory).
+  // Project workflows written before the in-project move live under the
+  // user's home namespace; keep reading them (same .js format) so an upgrade
+  // doesn't hide them, but never write there again (save() targets the
+  // in-project directory).
   const homeProjectDir = paths.homeSavedDir;
   const userDir = workflowUserSavedDir();
 
@@ -105,26 +114,49 @@ export function createWorkflowStorage(cwd: string, fsOverride?: Partial<Persiste
   const workflowPath = (name: string, location: "project" | "user") => {
     assertSafeSavedWorkflowName(name);
     const dir = location === "project" ? projectDir : userDir;
-    return join(dir, `${name}.json`);
+    return join(dir, `${name}.js`);
   };
   const homeProjectWorkflowPath = (name: string) => {
     assertSafeSavedWorkflowName(name);
-    return join(homeProjectDir, `${name}.json`);
+    return join(homeProjectDir, `${name}.js`);
   };
 
-  // Same atomic-write-with-backup + corrupt-file recovery contract as
-  // run-persistence.ts (see fs-persistence.ts) — a saved workflow is a
-  // user-authored artifact just as worth protecting from a crash mid-write
-  // or a truncated file as a run's resumable state is.
+  // Plain-text read with a tolerant contract: a missing, unreadable, or
+  // hand-broken file degrades to "not found" rather than crashing a load or
+  // taking down a whole listing — the same spirit as the old .json backup
+  // recovery's tolerance for corrupt records.
   const loadFromFile = (path: string, location: "project" | "user"): SavedWorkflow | null => {
-    const data = readJsonWithBackupRecovery<Record<string, unknown>>(fs, path);
-    if (!data || typeof data !== "object" || !isSafeSavedWorkflowName((data as { name?: string }).name ?? "")) {
+    let raw: string | null = null;
+    try {
+      if (fs.existsSync(path)) raw = fs.readFileSync(path, "utf-8");
+    } catch {
+      raw = null;
+    }
+    if (raw == null) return null;
+    // The .js format is parseWorkflowScript's native format: the first
+    // statement must be `export const meta = {...}`, everything after it is
+    // the body. A user-edited file can be broken in arbitrary ways, so parse
+    // failures (like missing files) mean "no such workflow".
+    let parsed: { meta: WorkflowMeta; body: string };
+    try {
+      parsed = parseWorkflowScript(raw);
+    } catch {
       return null;
     }
+    if (!parsed.meta.name || !isSafeSavedWorkflowName(parsed.meta.name)) return null;
     return {
-      ...(data as Omit<SavedWorkflow, "location" | "path">),
+      name: parsed.meta.name,
+      description: parsed.meta.description,
+      parameters: (parsed.meta as WorkflowMeta & { parameters?: SavedWorkflow["parameters"] }).parameters,
+      // The full file text is the runnable script: meta header + body, exactly
+      // what parseWorkflowScript expects. Consumers (registerSavedWorkflow,
+      // loadSavedWorkflow, runSavedShadowIfPresent) feed `script` straight
+      // back into parseWorkflowScript to execute it, so it must stay a
+      // complete module — not just the body.
+      script: raw,
       location,
       path,
+      // No savedAt: the .js format carries no timestamp.
     };
   };
 
@@ -135,15 +167,53 @@ export function createWorkflowStorage(cwd: string, fsOverride?: Partial<Persiste
       ensureDir(dir);
 
       const path = workflowPath(workflow.name, location);
-      const saved: SavedWorkflow = {
-        ...workflow,
-        location,
-        path,
-        savedAt: new Date().toISOString(),
-      };
-
-      writeJsonAtomicWithBackup(fs, path, saved);
-      return saved;
+      // Claude Code's own format: a `export const meta = {...}` block (the
+      // first statement, exactly what parseWorkflowScript expects) followed by
+      // the workflow body. Written as plain text — no JSON escaping, and the
+      // result is a real importable module.
+      //
+      // Every runnable workflow script already starts with its own
+      // `export const meta` header (parseWorkflowScript requires it); a second
+      // header would make the saved file unparseable ("Duplicate export").
+      // Embed the script body only — the file's meta block IS the header.
+      //
+      // The input to save() is a script that already ran (run/parse validated
+      // it), so a parse failure here is a programming error: throw and reject
+      // the save instead of writing a broken file. Parsing also yields the
+      // complete meta, which must be carried into the rebuilt header — phases
+      // and model drive per-phase agent routing (parseModelRoutingFromMeta)
+      // and TUI phase grouping, so dropping them would silently change the
+      // saved workflow's behavior.
+      const parsed = parseWorkflowScript(workflow.script);
+      const body = parsed.body;
+      const metaLines = [`export const meta = {`, `  name: ${JSON.stringify(workflow.name)},`];
+      // validateMeta (inside parseWorkflowScript on load) requires a non-empty
+      // description, so an empty one falls back to the name — otherwise the
+      // saved file would be unreadable and the artifact would silently die.
+      metaLines.push(
+        `  description: ${JSON.stringify(workflow.description.trim() ? workflow.description : workflow.name)},`,
+      );
+      if (workflow.parameters) metaLines.push(`  parameters: ${JSON.stringify(workflow.parameters, null, 2)},`);
+      if (parsed.meta.phases) {
+        // JSON.stringify starts at column 0, but the meta block is 2-space
+        // indented — shift continuation lines so the artifact stays readable
+        // (and genuinely hand-editable).
+        const phases = JSON.stringify(parsed.meta.phases, null, 2)
+          .split("\n")
+          .map((line, index) => (index === 0 ? line : `  ${line}`))
+          .join("\n");
+        metaLines.push(`  phases: ${phases},`);
+      }
+      if (parsed.meta.model) metaLines.push(`  model: ${JSON.stringify(parsed.meta.model)},`);
+      metaLines.push("}");
+      // Atomic write (tmp + rename on the same filesystem), so a crash
+      // mid-write can never leave a truncated .js in place of a good one. No
+      // .bak sidecar: the .js format is plain text with no recovery read, and
+      // a stale .tmp is invisible to load()/list() (they filter on .js).
+      const content = `${metaLines.join("\n")}\n\n${body}\n`;
+      fs.writeFileSync(`${path}.tmp`, content);
+      fs.renameSync(`${path}.tmp`, path);
+      return { ...workflow, location, path, savedAt: new Date().toISOString() };
     },
 
     load(name: string): SavedWorkflow | null {
@@ -180,8 +250,15 @@ export function createWorkflowStorage(cwd: string, fsOverride?: Partial<Persiste
         // A missing or unreadable directory (not yet created, deleted
         // mid-race, permission-denied) degrades to "no files" here — same
         // guard run-persistence.ts's list() uses — rather than throwing and
-        // taking down the whole listing over one bad storage location.
-        for (const file of listJsonFilesSafe(fs, dir)) {
+        // taking down the whole listing over one bad storage location. Only
+        // `.js` modules are workflows; `.json` records are never listed.
+        let files: string[] = [];
+        try {
+          if (fs.existsSync(dir)) files = fs.readdirSync(dir).filter((f) => f.endsWith(".js"));
+        } catch {
+          files = [];
+        }
+        for (const file of files) {
           const wf = loadFromFile(join(dir, file), location);
           if (wf && !seen.has(wf.name)) {
             seen.add(wf.name);

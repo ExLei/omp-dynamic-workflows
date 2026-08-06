@@ -25,19 +25,6 @@ import {
 
 const SEQ_STROKE = "#3f4a57";
 
-/**
- * Semantic hint next to a container's kind chip. Kept short: the dashed border
- * plus the legend already carry the "运行期决定" signal.
- */
-const HINT: Record<string, string> = {
-  parallel: "并发",
-  judgePanel: "并发",
-  pipeline: "串行",
-  loop: "循环",
-  branch: "条件",
-  fn: "辅助",
-};
-
 interface Sized {
   node: OutlineNode;
   w: number;
@@ -80,8 +67,8 @@ function anyDynamic(node: OutlineNode): boolean {
 /** A container's right-aligned meta: how many agent call sites it holds, and where it starts. */
 function containerMeta(node: OutlineNode): string {
   const agents = countAgents(node);
-  if (agents === 0) return `L${node.line}`;
-  return `${anyDynamic(node) ? "≥" : ""}${agents} agent · L${node.line}`;
+  if (agents === 0) return `行 ${node.line}`;
+  return `${anyDynamic(node) ? "≥" : ""}${agents} 个 agent · 行 ${node.line}`;
 }
 
 /**
@@ -119,7 +106,6 @@ function buildGraph(outline: WorkflowOutline): { nodes: FlowNode[]; edges: Edge[
           ? {
               kind: node.kind,
               title: label(node),
-              hint: HINT[node.kind],
               meta: containerMeta(node),
               dynamic: node.dynamic,
               line: node.line,

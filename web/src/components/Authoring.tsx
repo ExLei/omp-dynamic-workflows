@@ -75,7 +75,7 @@ export function Authoring() {
               />
             </div>
             <div className="shrink-0 border-t border-ink-600 p-2">
-              <div className="mb-1 text-[11px] tracking-wider text-ink-300 uppercase">args (JSON)</div>
+              <div className="mb-1 text-[11px] tracking-wider text-ink-300 uppercase">参数 (JSON)</div>
               <textarea
                 value={argsText}
                 onChange={(event) => setArgsText(event.target.value)}
@@ -88,7 +88,7 @@ export function Authoring() {
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-ink-300">
                   <CheckCircle2 className="size-3 text-ok" />
                   <span className="font-mono text-ink-100">{parse.meta.name}</span>
-                  <span>phases {parse.meta.phases?.length ?? 0}</span>
+                  <span>阶段 {parse.meta.phases?.length ?? 0}</span>
                   {outline && (
                     <>
                       <span>静态 agent 调用点 {outline.agentCallSites}</span>

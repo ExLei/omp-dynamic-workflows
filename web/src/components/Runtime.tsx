@@ -10,10 +10,10 @@ import { Button, fmtCost, fmtElapsed, fmtTokens, Panel, StatusDot } from "./ui";
 type Tab = "agents" | "result" | "logs" | "events";
 
 const TAB_LABEL: Record<Tab, string> = {
-  agents: "AGENTS",
-  result: "RESULT",
-  logs: "LOGS",
-  events: "EVENTS",
+  agents: "智能体",
+  result: "结果",
+  logs: "日志",
+  events: "事件",
 };
 
 export function Runtime() {
@@ -61,16 +61,16 @@ export function Runtime() {
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink-600 px-3 py-1.5 font-mono text-[12px] text-ink-300">
                 <StatusDot status={status ?? "pending"} pulse />
                 <span className="text-ink-100">{snapshot.name}</span>
-                <span>phase {snapshot.currentPhase ?? "-"}</span>
+                <span>阶段 {snapshot.currentPhase ?? "-"}</span>
                 <span>
-                  {snapshot.doneCount}/{snapshot.agentCount} done
+                  完成 {snapshot.doneCount}/{snapshot.agentCount}
                 </span>
-                {snapshot.runningCount > 0 && <span className="text-busy">{snapshot.runningCount} running</span>}
-                {snapshot.errorCount > 0 && <span className="text-bad">{snapshot.errorCount} err</span>}
-                <span>{fmtTokens(snapshot.tokenUsage?.total)} tok</span>
+                {snapshot.runningCount > 0 && <span className="text-busy">运行中 {snapshot.runningCount}</span>}
+                {snapshot.errorCount > 0 && <span className="text-bad">错误 {snapshot.errorCount}</span>}
+                <span>{fmtTokens(snapshot.tokenUsage?.total)} token</span>
                 <span>{fmtCost(snapshot.tokenUsage?.cost)}</span>
                 <span>{fmtElapsed(run?.durationMs ?? elapsed)}</span>
-                {run?.pauseReason && <span className="text-busy">paused: {run.pauseReason}</span>}
+                {run?.pauseReason && <span className="text-busy">已暂停:{run.pauseReason}</span>}
               </div>
               <div className="min-h-0 flex-1">
                 <RuntimeFlow snapshot={snapshot} />
@@ -122,7 +122,7 @@ function AgentTable() {
     <table className="w-full border-collapse font-mono text-[12px]">
       <thead className="sticky top-0 bg-ink-850 text-ink-300">
         <tr>
-          {["", "id", "label", "phase", "model", "tokens", "cost", "结果/错误"].map((header) => (
+          {["", "ID", "标签", "阶段", "模型", "Token", "成本", "结果/错误"].map((header) => (
             <th key={header} className="px-2 py-1 text-left font-normal">
               {header}
             </th>
@@ -179,7 +179,7 @@ function ResultPane() {
         </div>
       )}
       <div className="mb-1 flex items-center gap-2 text-[11px] tracking-wider text-ink-300 uppercase">
-        <span>return value</span>
+        <span>返回值</span>
         {outcome.durationMs ? <span>· {fmtElapsed(outcome.durationMs)}</span> : null}
         {text && (
           <button

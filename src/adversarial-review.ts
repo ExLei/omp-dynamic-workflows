@@ -23,7 +23,7 @@ export interface AdversarialReviewConfig {
 export function generateAdversarialReviewWorkflow(): string {
   return `export const meta = {
   name: 'adversarial_review',
-  description: 'Adversarial review: findings cross-checked by independent skeptics',
+  description: '对抗式审查：发现由独立怀疑者交叉核对',
   phases: [
     { title: 'Investigate' },
     { title: 'Refute' },
@@ -95,7 +95,7 @@ export function generateMultiPerspectiveWorkflow(topic: string, perspectives: st
 
   return `export const meta = {
   name: 'multi_perspective_analysis',
-  description: ${JSON.stringify(`Analyze from ${perspectives.length} different perspectives`)},
+  description: ${JSON.stringify(`从 ${perspectives.length} 个不同视角进行分析`)},
   phases: [
     { title: 'Perspective Analysis' },
     { title: 'Synthesis' },

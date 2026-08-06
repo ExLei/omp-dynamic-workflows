@@ -11,7 +11,7 @@ import type { ExtensionAPI } from "./omp-api.js";
 
 export function registerWorkflowModelsCommand(pi: ExtensionAPI): void {
   pi.registerCommand("workflows-models", {
-    description: "View and edit model tiers used by workflows (small/medium/big)",
+    description: "查看并编辑工作流使用的模型档位（small/medium/big）",
     handler: async (_args, ctx) => {
       const { runWorkflowModelsCommand } = await import("./workflows-models-ui.js");
       await runWorkflowModelsCommand(ctx);

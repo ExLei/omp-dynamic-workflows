@@ -187,11 +187,11 @@ export function createAgentStoreTools(store: SharedStore, deltaKey: string): Too
     name: "store_put",
     label: "Store Put",
     description:
-      "Write a value to the shared run store. Any other agent in this workflow run can read it with store_get. Overwrites any existing value for the key. Note: when two parallel agents write the same key, the last write wins — no merge is performed.",
-    promptSnippet: "Write a value to the shared store",
+      "向共享运行存储写入一个值。本次工作流运行中的其他任何代理都可以用 store_get 读取它。会覆盖该键已有的值。注意：当两个并行代理写入同一个键时，最后一次写入生效——不进行合并。",
+    promptSnippet: "向共享存储写入一个值，供并行代理共享中间状态",
     parameters: Type.Object({
-      key: Type.String({ description: "The key to store the value under." }),
-      value: Type.Any({ description: "The value to store (any JSON-serializable value)." }),
+      key: Type.String({ description: "用于存储该值的键。" }),
+      value: Type.Any({ description: "要存储的值（任意可 JSON 序列化的值）。" }),
     }),
     async execute(_id: string, params: { key: string; value: unknown }) {
       store.trackPut(params.key, params.value, deltaKey);
@@ -206,10 +206,10 @@ export function createAgentStoreTools(store: SharedStore, deltaKey: string): Too
     name: "store_get",
     label: "Store Get",
     description:
-      "Read a value from the shared run store previously written by store_put. Returns the stored value, or null when the key does not exist.",
-    promptSnippet: "Read a value from the shared store",
+      "从共享运行存储中读取先前由 store_put 写入的值。返回存储的值；键不存在时返回 null。",
+    promptSnippet: "从共享存储读取先前写入的值",
     parameters: Type.Object({
-      key: Type.String({ description: "The key to read." }),
+      key: Type.String({ description: "要读取的键。" }),
     }),
     async execute(_id: string, params: { key: string }) {
       const found = store.has(params.key);

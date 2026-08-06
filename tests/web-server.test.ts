@@ -264,7 +264,7 @@ describe("workflow web server", () => {
         })
       ).json();
       expect(saved.saved.location).toBe("project");
-      expect(saved.saved.path).toBe(join(cwd, ".omp", "workflows", "saved", "probe_cmd.json"));
+      expect(saved.saved.path).toBe(join(cwd, ".omp", "workflows", "saved", "probe_cmd.js"));
       expect(existsSync(saved.saved.path)).toBe(true);
 
       const after = await (await fetch(`${base}/api/save-locations?name=probe_cmd`, { headers: auth })).json();

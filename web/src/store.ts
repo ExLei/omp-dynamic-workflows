@@ -40,19 +40,19 @@ const FEED_EVENTS = [
 
 const SAMPLE_SCRIPT = `export const meta = {
   name: "web_probe",
-  description: "Web orchestration feasibility probe",
-  phases: [{ title: "recon" }, { title: "judge" }],
+  description: "Web 编排可行性探针",
+  phases: [{ title: "侦察" }, { title: "裁决" }],
 };
 
-await phase("recon");
+await phase("侦察");
 const findings = await parallel(
   ["auth", "runtime", "storage"].map((area) => () =>
-    agent(\`inspect the \${area} layer and list risks\`, { label: \`scout-\${area}\` }),
+    agent(\`检查 \${area} 层并列出风险\`, { label: \`scout-\${area}\` }),
   ),
 );
 
-await phase("judge");
-return await agent(\`rank these risks:\\n\${findings.join("\\n---\\n")}\`, { label: "judge" });
+await phase("裁决");
+return await agent(\`对这些风险排序:\\n\${findings.join("\\n---\\n")}\`, { label: "judge" });
 `;
 
 interface WorkflowStore {
@@ -285,7 +285,7 @@ export const useStore = create<WorkflowStore>((set, get) => ({
     try {
       args = argsText.trim() ? JSON.parse(argsText) : undefined;
     } catch {
-      set({ notice: { kind: "error", text: "args 不是合法 JSON" } });
+      set({ notice: { kind: "error", text: "参数不是合法 JSON" } });
       return;
     }
     try {
@@ -303,7 +303,8 @@ export const useStore = create<WorkflowStore>((set, get) => ({
     if (!runId) return;
     try {
       const { ok } = await api.control(runId, action);
-      set({ notice: { kind: ok ? "info" : "error", text: `${action}: ${ok ? "ok" : "拒绝(状态不允许)"}` } });
+      const label = { pause: "暂停", resume: "恢复", stop: "停止" }[action] ?? action;
+      set({ notice: { kind: ok ? "info" : "error", text: `${label}: ${ok ? "成功" : "拒绝(状态不允许)"}` } });
     } catch (error) {
       set({ notice: { kind: "error", text: String(error) } });
     }

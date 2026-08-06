@@ -49,6 +49,21 @@ export interface WorkflowSettings {
    * tool) so a subagent can't fan out through them.
    */
   excludeSubagentTools?: string[];
+  /** 子代理会话全量同步主代理扩展工具/技能（默认 true）。 */
+  syncHostTools?: boolean;
+  /** MCP 白名单：只在这些服务器的工具进子代理；空数组 = 不启用 MCP。 */
+  mcpServers?: string[];
+  /** 子代理会话启用 IRC 通信（默认 false）。 */
+  enableIrc?: boolean;
+  /**
+   * 同步/后台执行兜底开关（规格决策记录第 2 节预留项，V1 实测触发）：
+   * "always" 强制同步执行（进度帧流式显示，ACP 会话可实时看到进展）、
+   * "never" 强制后台（立即返回、结果后投递）、缺省 "auto" 维持现状判定
+   * （isAcpOrHeadlessSession —— 见 workflow-tool.ts backgroundDefault）。
+   * ACP 会话实测 ctx.hasUI===true，auto 判定在 ACP 下不触发同步，因此
+   * ACP 需要显式 "always" 才能强制同步。
+   */
+  syncMode?: "auto" | "always" | "never";
   /**
    * Local web console (see src/web-server.ts). On by default: the marginal
    * startup cost is ~3ms (module eval + loopback bind), which is inside the
@@ -188,7 +203,7 @@ function readSettings(path: string): WorkflowSettings {
   }
 }
 
-function normalizeSettings(value: unknown): WorkflowSettings {
+export function normalizeSettings(value: unknown): WorkflowSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const raw = value as Record<string, unknown>;
   const settings: WorkflowSettings = {};
@@ -234,6 +249,28 @@ function normalizeSettings(value: unknown): WorkflowSettings {
   if (Array.isArray(raw.excludeSubagentTools)) {
     const names = raw.excludeSubagentTools.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
     if (names.length) settings.excludeSubagentTools = names;
+  }
+  // 三字段遵循文件既有「缺省即省略」不变量：仅在显式出现且类型合法时输出键，
+  // 未设置/非法值不物化缺省——否则 { ...global, ...project } merge 会用项目文件
+  // 的缺省键静默覆盖全局显式设置，saveWorkflowSettings 也会写入用户从未设置的键。
+  // 缺省语义由消费端 ?? 兜底（syncHostTools ?? true / mcpServers ?? [] / enableIrc ?? false）。
+  if (typeof raw.syncHostTools === "boolean") {
+    settings.syncHostTools = raw.syncHostTools;
+  }
+  if (Array.isArray(raw.mcpServers)) {
+    const names = raw.mcpServers
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      .map((s) => s.trim());
+    if (names.length) settings.mcpServers = names;
+  }
+  if (typeof raw.enableIrc === "boolean") {
+    settings.enableIrc = raw.enableIrc;
+  }
+  // syncMode 同走「缺省即省略」不变量：仅显式合法值输出键，非法值/未设置不物化
+  // 缺省（auto）——否则 merge 与 save 会写入用户从未设置的键。auto 语义由消费端
+  // （workflow-tool.ts backgroundDefault）?? 兜底。
+  if (raw.syncMode === "auto" || raw.syncMode === "always" || raw.syncMode === "never") {
+    settings.syncMode = raw.syncMode;
   }
   const web = normalizeWebSettings(raw.web);
   if (web) settings.web = web;

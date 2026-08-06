@@ -67,11 +67,11 @@ function startBackground(
   try {
     const { runId } = manager.startInBackground(script, args, exec ?? {});
     ctx.ui.notify(
-      `/${name} running in the background (${runId}) — watch the task panel or /workflows; the report is posted here when it finishes.`,
+      `/${name} 正在后台运行（${runId}）— 可查看任务面板或 /workflows；完成后报告会发到这里。`,
       "info",
     );
   } catch (error) {
-    ctx.ui.notify(`${name} failed to start: ${error instanceof Error ? error.message : error}`, "error");
+    ctx.ui.notify(`${name} 启动失败：${error instanceof Error ? error.message : error}`, "error");
   }
 }
 
@@ -104,7 +104,7 @@ function resolveBuiltinOrNotify(
   try {
     return requireBuiltin(name).resolve(cwd, args);
   } catch (error) {
-    ctx.ui.notify(`/${name}: ${error instanceof Error ? error.message : String(error)}`, "warning");
+    ctx.ui.notify(`/${name}：${error instanceof Error ? error.message : String(error)}`, "warning");
     return undefined;
   }
 }
@@ -138,11 +138,11 @@ export function registerBuiltinWorkflows(
 
   if (!alreadyRegistered(pi, "deep-research")) {
     pi.registerCommand("deep-research", {
-      description: "Research a question across the web with cross-checked sources",
+      description: "跨网络研究一个问题，并交叉核对来源",
       async handler(args: string, ctx: ExtensionCommandContext) {
         if (runSavedShadowIfPresent("deep-research", args, ctx)) return;
         const question = args.trim();
-        if (!question) return ctx.ui.notify("Usage: /deep-research <question>", "warning");
+        if (!question) return ctx.ui.notify("用法: /deep-research <问题>", "warning");
         // Resolve through the shared builtin registry (builtin-workflows.ts) so
         // this command and the workflow tool's `name` input always run the exact
         // same generated script and exec context (tools/toolset) for this pattern.
@@ -165,11 +165,11 @@ export function registerBuiltinWorkflows(
 
   if (!alreadyRegistered(pi, "adversarial-review")) {
     pi.registerCommand("adversarial-review", {
-      description: "Investigate a task, then cross-check each finding with skeptical reviewers",
+      description: "调查一个任务，再由持怀疑态度的审查者交叉核对每项发现",
       async handler(args: string, ctx: ExtensionCommandContext) {
         if (runSavedShadowIfPresent("adversarial-review", args, ctx)) return;
         const task = args.trim();
-        if (!task) return ctx.ui.notify("Usage: /adversarial-review <task or question>", "warning");
+        if (!task) return ctx.ui.notify("用法: /adversarial-review <任务或问题>", "warning");
         const resolved = resolveBuiltinOrNotify("adversarial-review", cwd, { task }, ctx);
         if (!resolved) return;
         startBackground(manager, ctx, "adversarial-review", resolved.script, { task });
@@ -179,8 +179,7 @@ export function registerBuiltinWorkflows(
 
   if (!alreadyRegistered(pi, "code-review")) {
     pi.registerCommand("code-review", {
-      description:
-        "Multi-angle parallel code review: 7 specialized finders (correctness, reuse, simplification, efficiency, altitude) + verify pass → ranked findings",
+      description: "多角度并行代码审查：7 个专项发现器（正确性、复用、简化、效率、抽象层级）+ 验证阶段 → 排序后的发现",
       async handler(args: string, ctx: ExtensionCommandContext) {
         if (runSavedShadowIfPresent("code-review", args, ctx)) return;
         const input = args.trim();
@@ -213,19 +212,19 @@ export function registerBuiltinWorkflows(
           const { stdout } = await execFileAsync(cmd, cmdArgs, { cwd, maxBuffer: DIFF_EXEC_MAX_BUFFER });
           diff = stdout;
           if (!diff.trim()) {
-            return ctx.ui.notify(`No diff output from: ${diffSource}`, "warning");
+            return ctx.ui.notify(`${diffSource} 没有 diff 输出`, "warning");
           }
         } catch (err) {
           const code = (err as NodeJS.ErrnoException | undefined)?.code;
           if (code === "ERR_CHILD_PROCESS_STDOUT_MAXBUFFER") {
             return ctx.ui.notify(
-              `Diff from ${diffSource} exceeds the ${Math.floor(DIFF_EXEC_MAX_BUFFER / (1024 * 1024))}MB capture limit — ` +
-                `narrow the target (e.g. a specific file or path) and try again.`,
+              `来自 ${diffSource} 的 diff 超过 ${Math.floor(DIFF_EXEC_MAX_BUFFER / (1024 * 1024))}MB 捕获上限 — ` +
+                `请缩小目标（如指定文件或路径）后重试。`,
               "error",
             );
           }
           return ctx.ui.notify(
-            `Failed to get diff (${diffSource}): ${err instanceof Error ? err.message : err}`,
+            `获取 diff 失败（${diffSource}）：${err instanceof Error ? err.message : err}`,
             "error",
           );
         }
@@ -237,8 +236,8 @@ export function registerBuiltinWorkflows(
         if (originalLength > MAX_DIFF_CHARS) {
           diff = diff.slice(0, MAX_DIFF_CHARS);
           ctx.ui.notify(
-            `Diff is ${originalLength.toLocaleString()} characters — truncated to the first ` +
-              `${MAX_DIFF_CHARS.toLocaleString()} for the review. Findings past the cut are not covered.`,
+            `diff 共 ${originalLength.toLocaleString()} 个字符 — 已截断到前 ` +
+              `${MAX_DIFF_CHARS.toLocaleString()} 个供审查。截断之后的发现不在覆盖范围内。`,
             "warning",
           );
         }
@@ -252,12 +251,12 @@ export function registerBuiltinWorkflows(
 
   if (!alreadyRegistered(pi, "multi-perspective")) {
     pi.registerCommand("multi-perspective", {
-      description: "Analyze a topic from several independent perspectives in parallel, then synthesize",
+      description: "并行从多个独立视角分析主题，然后综合",
       async handler(args: string, ctx: ExtensionCommandContext) {
         if (runSavedShadowIfPresent("multi-perspective", args, ctx)) return;
         const [topic, ...rest] = tokenizeArgs(args);
         if (!topic) {
-          return ctx.ui.notify('Usage: /multi-perspective "<topic>" [perspective1] [perspective2] …', "warning");
+          return ctx.ui.notify('用法: /multi-perspective "<主题>" [视角1] [视角2] …', "warning");
         }
         // resolve() falls back to a broadly-useful default set when fewer than
         // two perspectives are given (see builtin-workflows.ts).
@@ -270,12 +269,12 @@ export function registerBuiltinWorkflows(
 
   if (!alreadyRegistered(pi, "codebase-audit")) {
     pi.registerCommand("codebase-audit", {
-      description: "Run parallel checks against a codebase scope, then cross-validate and report",
+      description: "对代码库范围并行执行检查，然后交叉验证并报告",
       async handler(args: string, ctx: ExtensionCommandContext) {
         if (runSavedShadowIfPresent("codebase-audit", args, ctx)) return;
         const [scope, ...checks] = tokenizeArgs(args);
         if (!scope || checks.length === 0) {
-          return ctx.ui.notify('Usage: /codebase-audit <scope> "<check1>" ["<check2>" …]', "warning");
+          return ctx.ui.notify('用法: /codebase-audit <范围> "<检查1>" ["<检查2>" …]', "warning");
         }
         const resolved = resolveBuiltinOrNotify("codebase-audit", cwd, { scope, checks }, ctx);
         if (!resolved) return;

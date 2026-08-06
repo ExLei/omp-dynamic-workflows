@@ -27,7 +27,7 @@ function buildGraph(snapshot: WorkflowSnapshot, selectedAgentId: number | null):
   const phases = [...snapshot.phases];
   const byPhase = new Map<string, AgentSnapshot[]>();
   for (const agent of snapshot.agents) {
-    const phase = agent.phase ?? "(no phase)";
+    const phase = agent.phase ?? "（无阶段）";
     if (!phases.includes(phase)) phases.push(phase);
     const bucket = byPhase.get(phase);
     if (bucket) bucket.push(agent);

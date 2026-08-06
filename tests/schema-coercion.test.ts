@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { extractValidated } from "../src/agent.js";
+import { normalizeSettings } from "../src/workflow-settings.js";
 import { Check, Convert, type TSchema, Type } from "../src/omp-typebox.js";
 
 describe("Convert", () => {
@@ -73,5 +74,43 @@ describe("extractValidated", () => {
     const schema = Type.Object({ verdict: Type.String(), score: Type.Number() });
     expect(extractValidated('{"verdict":"pass","score":"n/a"}', schema)).toBeUndefined();
     expect(extractValidated("no json here", schema)).toBeUndefined();
+  });
+});
+
+describe("normalizeSettings", () => {
+  test("coerces syncHostTools / mcpServers / enableIrc, trimming whitespace-only entries", () => {
+    // " " 能通过旧版 s.length > 0 过滤，纯空白串必须被 trim 过滤且存值前 trim。
+    expect(normalizeSettings({ syncHostTools: false, mcpServers: ["a", 3, " "], enableIrc: true })).toEqual({
+      syncHostTools: false,
+      mcpServers: ["a"],
+      enableIrc: true,
+    });
+  });
+
+  test("keeps syncHostTools / mcpServers / enableIrc sparse when omitted", () => {
+    // 缺省即省略：不物化缺省键，否则项目覆盖文件会经 { ...global, ...project }
+    // merge 静默覆盖全局显式设置。缺省语义由消费端（任务 4）?? 兜底。
+    const normalized = normalizeSettings({});
+    expect(normalized.syncHostTools).toBeUndefined();
+    expect(normalized.mcpServers).toBeUndefined();
+    expect(normalized.enableIrc).toBeUndefined();
+  });
+
+  test("does not materialize defaults for type-invalid values", () => {
+    const normalized = normalizeSettings({ syncHostTools: 1, mcpServers: "x", enableIrc: "yes" });
+    expect(normalized.syncHostTools).toBeUndefined();
+    expect(normalized.mcpServers).toBeUndefined();
+    expect(normalized.enableIrc).toBeUndefined();
+  });
+
+  test("syncMode: explicit valid values are kept, invalid/absent ones stay sparse", () => {
+    // 仅显式合法值输出键；非法值/缺省不物化 auto 缺省键（同三字段不变量，
+    // auto 语义由 workflow-tool.ts backgroundDefault ?? 兜底）。
+    expect(normalizeSettings({ syncMode: "auto" })).toEqual({ syncMode: "auto" });
+    expect(normalizeSettings({ syncMode: "always" })).toEqual({ syncMode: "always" });
+    expect(normalizeSettings({ syncMode: "never" })).toEqual({ syncMode: "never" });
+    expect(normalizeSettings({ syncMode: "sometimes" })).toEqual({});
+    expect(normalizeSettings({ syncMode: 1 })).toEqual({});
+    expect(normalizeSettings({}).syncMode).toBeUndefined();
   });
 });

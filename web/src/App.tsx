@@ -21,7 +21,7 @@ export default function App() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-ink-600 bg-ink-800 px-3 py-1.5">
-        <span className="font-semibold text-accent">omp workflows</span>
+        <span className="font-semibold text-accent">工作流控制台</span>
         <span className="truncate font-mono text-[12px] text-ink-300">{cwd}</span>
         <span className={connected ? "ml-auto text-[12px] text-ok" : "ml-auto text-[12px] text-ink-300"}>
           {connected ? "● 实时已连接" : "○ 未连接"}

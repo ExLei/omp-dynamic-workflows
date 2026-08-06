@@ -19,9 +19,13 @@ Ported from `pi-dynamic-workflows` onto the current `@oh-my-pi/*` extension APIs
 
 | | |
 |---|---|
-| omp | `@oh-my-pi/pi-coding-agent` ≥ 17.2.4 (peer dependency, with `pi-ai` / `pi-tui` / `pi-utils`) |
+| omp | `@oh-my-pi/pi-coding-agent` ≥ 17.2.4, < 17.3 (peer dependency, with `pi-ai` / `pi-tui` / `pi-utils`) |
 | bun | plugin install and the console build |
 | git | only for `isolation: "worktree"` |
+
+> Global omp **17.2.9 is not yet supported** (its typebox shim API changed and the
+> plugin crashes at load — verified). Keep omp pinned to **17.2.4**; the peer range is
+> `>=17.2.4 <17.3`.
 
 ## Install
 
@@ -292,7 +296,7 @@ rather than silently degrading. `agentType` narrows further, per that definition
 ### Saving
 
 `/workflows save <name> [runId] [project|user]`, or the console's Save button, writes
-`<name>.json` to either scope and registers the slash command immediately:
+`<name>.js` to either scope and registers the slash command immediately:
 
 | Scope | Path | Notes |
 |---|---|---|
@@ -431,6 +435,7 @@ the global one; it is not deep-merged. Unknown keys are dropped; a corrupt file 
 | `persistAgentSessions` | boolean | `false` |
 | `deliveredResultMaxChars` | 1–1000000 | `400` |
 | `excludeSubagentTools` | string[] | `[]` (on top of the always-excluded orchestration tools) |
+| `syncMode` | `"auto"` \| `"always"` \| `"never"` | `"auto"` (`"always"` forces synchronous execution with live progress frames — needed in ACP sessions, where `ctx.hasUI` is `true` and auto-detection would otherwise default to background; `"never"` forces background) |
 | `web.enabled` | boolean | `true` (only an explicit `false` disables) |
 | `web.port` | 1–65535 | `0` (ephemeral) |
 | `web.announce` | boolean | `true` |
@@ -464,7 +469,7 @@ options (`concurrency`, `agentTimeoutMs`, …).
 |---|---|
 | `~/.omp/workflows/settings.json` | User settings |
 | `~/.omp/workflows/model-tiers.json` | Model tiers |
-| `~/.omp/workflows/saved/` | Personal saved workflows (`<name>.json`) |
+| `~/.omp/workflows/saved/` | Personal saved workflows (`<name>.js`) |
 | `~/.omp/workflows/projects/<basename>-<sha256[0:12]>/` | Machine-local per-cwd root |
 | `…/settings.json` | Project settings override |
 | `…/runs/<runId>.json` (+ `.bak`, `.lock`, `.log`) | Run state with embedded resume journal, atomic backup, cross-process lease, optional file log |

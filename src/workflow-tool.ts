@@ -1,9 +1,9 @@
+import { isAcpOrHeadlessSession, renderProgressFrame, throttleFrames } from "./acp-bridge.js";
 import { defineTool, type ToolDefinition } from "./omp-api.js";
 import { Text } from "@oh-my-pi/pi-tui";
 import { Type } from "./omp-typebox.js";
 import { BUILTIN_WORKFLOW_NAMES, resolveWorkflowInvocation } from "./builtin-workflows.js";
 import {
-  createToolUpdateWorkflowDisplay,
   createWorkflowSnapshot,
   fmtCost,
   fmtFull,
@@ -21,7 +21,7 @@ import { loadWorkflowSettings } from "./workflow-settings.js";
 
 /** The single always-on gate that authorizes workflow use without forcing it. */
 export const WORKFLOW_GATE_GUIDELINE =
-  "The `workflow` tool runs multi-agent orchestration — it fans decomposable work out across subagents, and fits tasks shaped like: repo-wide inspection, independent parallel research/checks, multi-perspective review, or fan-out/fan-in synthesis. ONLY call it when the user explicitly opts in — via the workflow trigger word, `/workflows run`, or their own words (e.g. 'run a workflow', 'fan this out', '并行审一遍'). For any other task — even one that would clearly benefit — do not call it; you may briefly offer it (with a rough cost) as an option instead.";
+  "`workflow` 工具用于多代理编排 — 它把可拆分的工作扇出给子代理，适合这类任务：仓库级检查、独立并行的研究/检查、多视角审查，或扇出/扇入式综合。仅当用户显式选择使用工作流时才调用它 — 通过工作流触发词、`/workflows run` 命令，或用户自己的话（如「跑个工作流」「扇出处理」「并行审一遍」）。对其他任何任务 — 即使明显能受益 — 也不要调用；你可以把工作流作为选项简要提供给用户（并给出大致成本）。";
 
 // Built lazily: `Type` is backed by the TypeBox shim injected on ExtensionAPI,
 // which does not exist until the extension factory has installed the host
@@ -31,25 +31,25 @@ function buildWorkflowToolSchema() {
     script: Type.Optional(
       Type.String({
         description: [
-          "Raw JavaScript workflow script, with no Markdown fences. Required unless `name` is given.",
-          "First statement: export const meta = { name: 'short_snake_case', description: 'non-empty description' }. Add phases: [{ title: 'Phase' }] only when the workflow has named phases, and declare only phases it will use. With multiple phases, call phase('Exact Title') before each phase's work or set `phase` in the agent options.",
-          "Use `await workflow(savedName, childArgs)` to run a saved workflow inline; nesting is limited to one level and shares the parent run's concurrency, agent, and token limits.",
-          "Optional quality helpers include verify(), judgePanel(), loopUntilDry(), and completenessCheck().",
-          "Optional control helpers include retry() and gate(); budget exposes total, spent(), and remaining(), and phase('Name', { budget: N }) sets a phase token limit.",
-          "The optional `agentType` option selects a named user or project definition that can bind tools, a model, and role instructions; use it only when its name and purpose are provided in context. Its bound model overrides `tier`; an explicit `model` overrides both.",
-          "Use plain JavaScript only; imports, require(), filesystem modules, Date.now(), Math.random(), and new Date() are unavailable.",
-          "Use phase('Name'), agent(prompt, opts), parallel(arrayOfFunctions), pipeline(items, ...stages), log(message), args, cwd, process.cwd(), and budget. The workflow must call agent() at least once.",
-          "parallel() requires functions, not promises, and returns results in input order: await parallel(items.map(item => () => agent(...))).",
-          "pipeline(items, ...stages) runs stages sequentially for each item while items proceed concurrently; each stage receives (previousValue, originalItem, index).",
+          "原始 JavaScript 工作流脚本，不带 Markdown 围栏。除非提供了 `name`，否则此项必需。",
+          "第一条语句必须是 export const meta = { name: 'short_snake_case', description: '非空描述' }。仅当工作流有命名阶段时才添加 phases: [{ title: 'Phase' }]，且只声明它实际会用到的阶段。有多个阶段时，在每个阶段的工作前调用 phase('Exact Title')，或在代理选项中设置 `phase`。",
+          "用 `await workflow(savedName, childArgs)` 内联运行已保存的工作流；嵌套限制为一层，并共享父运行的并发、代理与 token 限额。",
+          "可选的质量辅助函数包括 verify()、judgePanel()、loopUntilDry() 与 completenessCheck()。",
+          "可选的控制辅助函数包括 retry() 与 gate()；budget 暴露 total、spent() 与 remaining()，phase('Name', { budget: N }) 可为阶段设置 token 限额。",
+          "可选的 `agentType` 选项选择具名的用户或项目定义，可绑定工具、模型与角色指令；仅当上下文中提供了其名称与用途时才使用。其绑定的模型覆盖 `tier`；显式的 `model` 同时覆盖两者。",
+          "只使用纯 JavaScript；imports、require()、文件系统模块、Date.now()、Math.random() 与 new Date() 均不可用。",
+          "使用 phase('Name')、agent(prompt, opts)、parallel(arrayOfFunctions)、pipeline(items, ...stages)、log(message)、args、cwd、process.cwd() 与 budget。工作流必须至少调用一次 agent()。",
+          "parallel() 需要函数而非 promise，并按输入顺序返回结果：await parallel(items.map(item => () => agent(...)))。",
+          "pipeline(items, ...stages) 对每个条目依次运行各阶段，而条目之间并发推进；每个阶段接收 (previousValue, originalItem, index)。",
         ].join(" "),
       }),
     ),
     name: Type.Optional(
       Type.String({
         description:
-          "Run a saved or built-in workflow by name instead of `script`; its args go in `args`. " +
-          `Built-ins: ${BUILTIN_WORKFLOW_NAMES.join(", ")} — see the workflow-patterns skill for each one's args. ` +
-          "A same-named saved workflow wins. Not combinable with resumeFromRunId.",
+          "按名称运行已保存或内置的工作流（而不是传 `script`）；其参数放在 `args` 中。 " +
+          `内置工作流：${BUILTIN_WORKFLOW_NAMES.join(", ")} — 每个内置工作流的参数见 workflow-patterns 技能。 ` +
+          "同名时已保存的工作流优先。不能与 resumeFromRunId 组合使用。",
       }),
     ),
     args: Type.Optional(
@@ -62,57 +62,62 @@ function buildWorkflowToolSchema() {
       // that requires an args field fails validation regardless of what the
       // caller actually sent. Every built-in pattern's `args` is a JSON object
       // at the top level, so declaring `type: "object"` is lossless and fixes
-      // the coercion. Type.Unsafe keeps the emitted schema minimal (no
-      // `properties`/`additionalProperties` boilerplate — JSON Schema already
-      // allows additional properties by default) to stay inside the
-      // provider-visible tool definition's byte budget.
-      Type.Unsafe<Record<string, unknown>>({
-        type: "object",
-        description: "Optional JSON value exposed to the workflow script as global `args`.",
-      }),
+      // the coercion.
+      //
+      // Not Type.Unsafe({ type: "object" }): on omp >= 17.2.9 the host TypeBox
+      // shim returns a bare object from Type.Unsafe that lacks the `.or`
+      // method, so wrapping it in Type.Optional(...) crashes at load time with
+      // "X3(n).or is not a function" (17.2.4's Zod-backed shim tolerated it).
+      // Type.Object({}) emits `{ type: "object", properties: {} }` — JSON
+      // Schema allows undeclared properties by default, so it accepts any JSON
+      // object, and the emitted schema stays small.
+      Type.Object(
+        {},
+        { description: "可选的 JSON 值，作为全局 `args` 暴露给工作流脚本。" },
+      ),
     ),
     background: Type.Optional(
       Type.Boolean({
         description:
-          "Run the workflow in the background. Default: true — the tool returns immediately with a run ID, the turn ends so the user isn't blocked, and the result is delivered back into the conversation when it finishes. Set to false only when you need the result inline in this same turn (the call will block until the workflow completes).",
+          "在后台运行工作流。默认跟随 syncMode：缺省 auto 下，无 UI 会话（ACP/headless）默认同步、TUI 会话默认后台；always 强制同步、never 强制后台。显式 `background` 参数始终优先。后台模式下工具立即返回 run ID，本轮对话结束、用户不被阻塞，工作流完成时结果再投递回对话。仅当你需要在本轮对话内联拿到结果时才设为 false（该调用会阻塞直到工作流完成）。",
       }),
     ),
     maxAgents: Type.Optional(
       Type.Number({
         description:
-          "Maximum number of agents allowed in this run. Default: 1000; this is a safety ceiling, not a target. Set a lower limit for dynamic or exploratory fan-out, and reserve large fan-outs for explicit user intent.",
+          "本次运行允许的最大代理数。默认 1000；这是安全上限而非目标。动态或探索性扇出请设更低的上限，大规模扇出保留给用户明确的意图。",
       }),
     ),
     concurrency: Type.Optional(
       Type.Number({
         description:
-          "Maximum concurrent agents for this run. Clamped to the runtime maximum. Use when provider/transport stability matters.",
+          "本次运行的最大并发代理数。被钳制到运行时上限。当提供商/传输稳定性重要时使用。",
       }),
     ),
     agentRetries: Type.Optional(
       Type.Number({
         description:
-          "Retry attempts for recoverable agent failures such as timeout, connection failure, or empty assistant output. Default 0 unless configured.",
+          "可恢复的代理失败（如超时、连接失败或空输出）的重试次数。默认 0，除非另行配置。",
       }),
     ),
     agentTimeoutMs: Type.Optional(
       Type.Number({
         description:
-          "Timeout per agent in milliseconds. Omit to use configured `defaultAgentTimeoutMs`; without one, there is no hard timeout. Set only when the user asks to bound time.",
+          "每个代理的超时时间（毫秒）。省略时使用配置的 `defaultAgentTimeoutMs`；没有配置则无硬超时。仅当用户要求限制时间时设置。",
       }),
     ),
     tokenBudget: Type.Optional(
       Type.Number({
         description:
-          "Optional user-requested soft spend gate, not a planning target. Do not set `tokenBudget` unless the user explicitly supplies a cap or asks you to choose one; never infer or invent one from task size. If omitted, the configured `defaultTokenBudget` applies; without one, the run is unlimited. Reaching the gate blocks later `agent()` calls; concurrent in-flight work can overshoot.",
+          "可选的、由用户请求的软性支出上限，不是规划目标。除非用户明确给出上限或要求你选一个，否则不要设置 `tokenBudget`；绝不根据任务规模推断或虚构一个。省略时使用配置的 `defaultTokenBudget`；没有配置则运行不受限。达到上限会阻塞之后的 `agent()` 调用；并发的在途工作可能超支。",
       }),
     ),
     resumeFromRunId: Type.Optional(
       Type.String({
         description: [
-          "Resume a prior run (this ID) with an edited `script` instead of starting a new run.",
-          "Unchanged agent() calls replay from that run's cache; the first changed/new call onward re-runs.",
-          "Calls match by position: keep earlier good calls identical and in order. Always background.",
+          "用编辑过的 `script` 恢复先前的一次运行（该 ID），而不是启动新运行。",
+          "未改动的 agent() 调用从该运行的缓存重放；从第一个改动或新增的调用起重新执行。",
+          "调用按位置匹配：保持前面好的调用原样不变、顺序不动。始终在后台运行。",
         ].join(" "),
       }),
     ),
@@ -152,6 +157,12 @@ export interface WorkflowToolOptions {
   defaultConcurrency?: number;
   /** Default retry attempts after recoverable agent failures. */
   defaultAgentRetries?: number;
+  /**
+   * 同步/后台执行开关，覆盖 settings.syncMode（options 优先，对齐
+   * resolveWorkflowToolDefaults 模式）："always" 强制同步、"never" 强制后台、
+   * "auto"（缺省）维持 isAcpOrHeadlessSession 现状判定。
+   */
+  syncMode?: "auto" | "always" | "never";
 }
 
 export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefinition<WorkflowToolSchema, any> {
@@ -172,9 +183,9 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
     name: "workflow",
     label: "Workflow",
     description:
-      "Run a JavaScript workflow that delegates work to subagents with agent(), optionally composing calls with parallel() and pipeline().",
+      "运行一个以 JavaScript 编写的动态工作流：通过 agent() 把任务委派给子代理，可组合 parallel()/pipeline() 编排。",
     promptSnippet:
-      "Delegate substantive independent or staged work to subagents with a JavaScript workflow, optionally composing agent calls with parallel(), pipeline(), or both",
+      "适合把可拆分的独立任务或分阶段任务委派给子代理时，用 JavaScript 工作流编排 agent()、parallel()、pipeline() 调用",
     get promptGuidelines() {
       return [WORKFLOW_GATE_GUIDELINE];
     },
@@ -242,11 +253,27 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
         ? (promptText: string) => uiConfirm.call(uiCtx?.ui, "Workflow checkpoint", promptText)
         : undefined;
 
+      // ACP/headless 会话（无 TUI）默认同步执行：进度经 onUpdate 流式推送（ACP
+      // tool_call_update），后台跑完无处回报。TUI 会话保持后台默认——立即返回、
+      // 结束时把结果投递回对话（见 installResultDelivery）。显式 background 参数优先。
+      //
+      // syncMode 设置兜底（规格决策记录第 2 节预留项，V1 实测触发）：ACP 会话实测
+      // ctx.hasUI===true，isAcpOrHeadlessSession 的 auto 判定在 ACP 下不触发同步——
+      // "always" 强制同步（backgroundDefault false）、"never" 强制后台（true）、
+      // 缺省 "auto" 维持现状。options.syncMode 优先于 settings（对齐
+      // resolveWorkflowToolDefaults 的 options 优先模式），execute 内读 settings
+      // 保证运行期改设置即时生效。
+      const acpSession = isAcpOrHeadlessSession(uiCtx);
+      const settings = loadWorkflowSettings({ cwd });
+      const syncMode = options.syncMode ?? settings.syncMode;
+      const backgroundDefault =
+        syncMode === "always" ? false : syncMode === "never" ? true : (acpSession ? false : true);
+
       // Background execution is the default: return immediately so the turn ends
       // and the user isn't blocked. The result is delivered back into the
       // conversation when the run finishes (see installResultDelivery). Only an
       // explicit `background: false` blocks for the result inline.
-      if (params.background ?? true) {
+      if (params.background ?? backgroundDefault) {
         const { runId } = manager.startInBackground(script, params.args, {
           maxAgents: params.maxAgents,
           concurrency: params.concurrency,
@@ -267,12 +294,23 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
       // runs, then stays in history afterwards. We still block on the result and
       // return it inline, so the model gets the full output in the same turn.
       let snapshot: WorkflowSnapshot = createWorkflowSnapshot(parsed.meta);
-      const display = createToolUpdateWorkflowDisplay(onUpdate, undefined, {
-        key: "workflow",
-        streamToolUpdates: true,
-        maxAgents: 4,
-        showResultPreviews: false,
-      });
+      // 同步分支不复用 createToolUpdateWorkflowDisplay：其 emit 固定用 renderWorkflowText，
+      // 无法输出 ACP 进度帧。这里自管帧输出——onUpdate 推 renderProgressFrame 文本 +
+      // details 快照，onProgress 里 recompute 后经 throttleFrames 节流（1s 一帧）。
+      // 节流只应用于 ACP/headless 会话（无 TUI，1s 一帧防消息风暴）；TUI 会话的同步
+      // 分支（显式 background:false）保持每事件 onUpdate，不降频。结束（含中止）路径
+      // 先 cancel() 清掉 pending 尾帧定时器，再无条件发终帧。
+      const emitFrame = () => {
+        onUpdate?.({
+          content: [{ type: "text", text: renderProgressFrame(snapshot) }],
+          details: snapshot,
+        });
+      };
+      const throttled = throttleFrames(emitFrame, 1000);
+      const emitProgress = () => {
+        if (acpSession) throttled();
+        else emitFrame();
+      };
 
       let result: WorkflowRunResult;
       try {
@@ -288,10 +326,13 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           externalSignal: signal,
           onProgress(live) {
             snapshot = recomputeWorkflowSnapshot(live);
-            display.update(snapshot);
+            emitProgress();
           },
         });
       } catch (error) {
+        // 错误退出路径（含非中止）先 cancel 节流定时器：否则残留 trailing 定时器会在
+        // 工具返回错误后约 1s 越界补发一帧陈旧进度帧。
+        throttled.cancel();
         if (signal?.aborted || (error instanceof WorkflowError && error.code === WorkflowErrorCode.WORKFLOW_ABORTED)) {
           for (const agent of snapshot.agents) {
             if (agent.status === "running") {
@@ -300,13 +341,15 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
             }
           }
           snapshot = recomputeWorkflowSnapshot(snapshot);
-          display.complete(snapshot);
+          throttled.cancel();
+          emitFrame();
           throw new Error("Workflow was aborted");
         }
         throw error;
       }
 
       if (result.agentCount === 0) {
+        throttled.cancel(); // 该 throw 在 try 外，runSync 可能已发过 onProgress，同样先 cancel 防越界补帧
         throw new Error(
           "workflow scripts must call agent() at least once; this workflow declared phases but did not run any subagents",
         );
@@ -314,8 +357,10 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
 
       snapshot.result = result.result;
       snapshot.durationMs = result.durationMs;
+      snapshot.runId = result.runId; // 终帧带真实 runId（帧头 run xxx，此前为 "-"）
       snapshot = recomputeWorkflowSnapshot(snapshot);
-      display.complete(snapshot);
+      throttled.cancel();
+      emitFrame(); // 结束时无条件发最终帧
 
       // Format token usage (include cost when the provider reports it)
       const tokenSegment = fmtTokenSegment(tokenFigures(result.tokenUsage), fmtFull);

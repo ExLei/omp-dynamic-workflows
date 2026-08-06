@@ -13,13 +13,30 @@ export const PAD_TOP = 32;
 export const PAD_BOTTOM = 12;
 export const GAP = 12;
 
+/** Chinese chip labels for the analyzer's node kinds. */
+export const KIND_LABEL: Record<string, string> = {
+  phase: "阶段",
+  agent: "调用",
+  parallel: "并发",
+  judgePanel: "并发",
+  pipeline: "串行",
+  workflow: "工作流",
+  verify: "验证",
+  loopUntilDry: "循环至收敛",
+  completenessCheck: "完整性检查",
+  retry: "重试",
+  gate: "门控",
+  checkpoint: "检查点",
+  loop: "循环",
+  branch: "条件",
+  fn: "辅助",
+};
+
 export type ContainerNodeData = {
   kind: string;
   title: string;
-  /** Right-aligned meta, e.g. `L91` or `3 agents`. */
+  /** Right-aligned meta, e.g. `行 91` or `3 个 agent`. */
   meta?: string;
-  /** Semantic hint next to the kind chip, e.g. 并发 / 循环. */
-  hint?: string;
   dynamic?: boolean;
   active?: boolean;
   line?: number;
@@ -94,9 +111,8 @@ export function ContainerNode({ data }: NodeProps<Node<ContainerNodeData, "conta
       <Anchors />
       <div className="flex items-center gap-1.5 px-2.5 pt-1.5 text-[11px]">
         <span className="rounded-sm px-1 py-px" style={{ background: `${color}22`, color }}>
-          {data.kind}
+          {KIND_LABEL[data.kind] ?? data.kind}
         </span>
-        {data.hint && <span style={{ color }}>{data.hint}</span>}
         <span className="truncate font-mono text-[12px] text-ink-100">{data.title}</span>
         {data.meta && <span className="ml-auto shrink-0 font-mono text-ink-300">{data.meta}</span>}
       </div>
@@ -115,10 +131,10 @@ export function OutlineLeafNode({ data }: NodeProps<Node<OutlineLeafData, "outli
       <Anchors />
       <div className="flex items-center gap-1.5">
         <span className="shrink-0 text-[11px]" style={{ color }}>
-          {data.kind}
+          {KIND_LABEL[data.kind] ?? data.kind}
         </span>
         <span className="truncate font-mono text-[12px] text-ink-100">{data.title}</span>
-        <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-300">L{data.line}</span>
+        <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-300">行 {data.line}</span>
       </div>
       <div className={clsx("truncate text-[10px]", data.dynamic ? "text-busy" : "text-ink-300")}>
         {data.dynamic ? "运行期决定" : (data.detail ?? "")}

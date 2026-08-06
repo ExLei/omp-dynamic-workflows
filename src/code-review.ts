@@ -28,7 +28,7 @@ export const MAX_DIFF_CHARS = 200_000;
 export function generateCodeReviewWorkflow(): string {
   return `export const meta = {
   name: 'code_review',
-  description: 'Multi-angle parallel code review: 7 finder angles + verify pass → ranked findings',
+  description: '多角度并行代码审查：7 个发现角度 + 验证阶段 → 排序后的发现',
   phases: [
     { title: 'Find' },
     { title: 'Verify' },

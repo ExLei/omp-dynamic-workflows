@@ -3,7 +3,7 @@ import { Copy, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentHistoryEntry, AgentSnapshot } from "../lib/types";
 import { useStore } from "../store";
-import { fmtCost, fmtTokens, StatusDot } from "./ui";
+import { fmtCost, fmtTokens, StatusDot, statusLabel } from "./ui";
 
 type DrawerTab = "live" | "result" | "prompt";
 
@@ -91,7 +91,7 @@ export function AgentDrawer() {
               <span className="truncate font-mono text-[13px] text-ink-100">
                 [{agent.id}] {agent.label}
               </span>
-              <span className="shrink-0 font-mono text-[11px] text-ink-300">{agent.status}</span>
+              <span className="shrink-0 font-mono text-[11px] text-ink-300">{statusLabel(agent.status)}</span>
               {live && <span className="shrink-0 text-[11px] text-busy">实时</span>}
               <button
                 type="button"
@@ -104,11 +104,11 @@ export function AgentDrawer() {
             </header>
 
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink-600 px-3 py-1.5 font-mono text-[11px] text-ink-300">
-              {agent.phase && <span>phase {agent.phase}</span>}
-              <span>{agent.model ?? "model 未知"}</span>
-              <span>{fmtTokens(agent.tokenUsage?.total ?? agent.tokens)} tok</span>
+              {agent.phase && <span>阶段 {agent.phase}</span>}
+              <span>{agent.model ?? "模型未知"}</span>
+              <span>{fmtTokens(agent.tokenUsage?.total ?? agent.tokens)} token</span>
               {agent.tokenUsage?.cost ? <span>{fmtCost(agent.tokenUsage.cost)}</span> : null}
-              {agent.tokenUsage?.cacheRead ? <span>cache {fmtTokens(agent.tokenUsage.cacheRead)}</span> : null}
+              {agent.tokenUsage?.cacheRead ? <span>缓存 {fmtTokens(agent.tokenUsage.cacheRead)}</span> : null}
             </div>
 
             <nav className="flex gap-1 border-b border-ink-600 bg-ink-850 px-2 py-1">

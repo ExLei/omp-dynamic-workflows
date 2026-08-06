@@ -49,7 +49,7 @@ export function isSubstantive(text: string): boolean {
 
 export function registerEffortCommand(pi: ExtensionAPI, state: EffortState): void {
   pi.registerCommand("effort", {
-    description: "Standing workflow effort: off | high | ultra — auto-arms a workflow for substantive messages",
+    description: "常驻工作流档位: off | high | ultra —— 对实质消息自动启用工作流编排",
     async handler(args: string, _ctx: ExtensionCommandContext) {
       const arg = args.trim().toLowerCase();
       const say = (content: string) => pi.sendMessage({ customType: "effort", content, display: true });
@@ -57,12 +57,12 @@ export function registerEffortCommand(pi: ExtensionAPI, state: EffortState): voi
         state.level = arg;
         await say(
           arg === "off"
-            ? "Effort off — messages are no longer auto-armed as workflows."
-            : `Effort ${arg} — substantive messages now auto-arm a workflow (${arg === "ultra" ? "exhaustive" : "thorough"} fan-out). Use /effort off to stop.`,
+            ? "档位 off — 消息不再自动作为工作流启用。"
+            : `档位 ${arg} — 实质消息现在会自动启用工作流（${arg === "ultra" ? "穷尽式" : "全面"}扇出）。用 /effort off 停止。`,
         );
         return;
       }
-      await say(`Effort is currently "${state.level}". Usage: /effort off | high | ultra`);
+      await say(`当前档位为 "${state.level}"。用法：/effort off | high | ultra`);
     },
   });
 
@@ -70,18 +70,18 @@ export function registerEffortCommand(pi: ExtensionAPI, state: EffortState): voi
   // `/ultracode` turns it on, `/ultracode off` turns it off. Alias for /effort ultra.
   pi.registerCommand("ultracode", {
     description:
-      "Ultracode: standing maximal-effort mode (this session only, never persisted) — auto-arms an exhaustive workflow for substantive messages. /ultracode off to stop.",
+      "Ultracode：常驻最大努力模式（仅当前会话生效，从不持久化）— 对实质消息自动启用穷尽式工作流。用 /ultracode off 停止。",
     async handler(args: string, _ctx: ExtensionCommandContext) {
       const arg = args.trim().toLowerCase();
       const say = (content: string) => pi.sendMessage({ customType: "effort", content, display: true });
       if (arg === "off") {
         state.level = "off";
-        await say("Ultracode off — messages are no longer auto-armed as workflows.");
+        await say("Ultracode 已关闭（off）— 消息不再自动作为工作流启用。");
         return;
       }
       state.level = "ultra";
       await say(
-        "Ultracode ON — substantive messages now auto-arm an exhaustive workflow (wide fan-out, big-tier synthesis). Use /ultracode off to stop.",
+        "Ultracode 已开启（ON）— 实质消息现在会自动启用穷尽式工作流（宽扇出、大档位综合）。用 /ultracode off 停止。",
       );
     },
   });
