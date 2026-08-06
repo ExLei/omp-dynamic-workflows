@@ -288,7 +288,13 @@ reply 回落「维持原脚本继续」。审阅失败（auto 模式）置 faile
 ### 子智能体会话
 
 每次 `agent()` 调用都是一个受限的 omp 子会话：默认编码工具集，加上运行级的 `store_put` / `store_get`，
-并且 `workflow` 与 `workflow_control` 始终禁用（`excludeSubagentTools` 里列出的也一并禁用）。运行也可以带一个
+并且 `workflow` 与 `workflow_control` 始终禁用（`excludeSubagentTools` 里列出的也一并禁用）。
+
+子代理会话默认挂载主代理的全部 MCP 服务器（`.mcp.json` 项目 + 用户配置发现源，
+`enableMCP: true`）——每个子代理独立拉起服务器连接/子进程，不共享主会话连接；
+并发 N 个子代理 × M 个服务器对应 N×M 份启动与资源开销。
+
+运行也可以带一个
 具名 **toolset** —— `/deep-research` 用的是 `web-research`，它额外提供真实的 `web_search` / `web_fetch`
 （在扩展宿主进程内执行网络请求）；该 tag 会随运行持久化，因此恢复的运行仍保有这些工具，不会静默退化。
 `agentType` 会按其定义的 `tools` / `disallowedTools` 进一步收窄。子会话记录默认不落盘，除非开启
@@ -487,7 +493,16 @@ bun run web:build   # 构建控制台 → web/dist
 | `schema-coercion.test.ts` | 结构化输出的 TypeBox convert/check 强制转换 |
 | `live-usage.test.ts` | 经 workflow 与 manager 的 token 用量聚合 |
 | `js-save.test.ts` | 已保存工作流（`.js`）的作用域存/取与脚本解析校验 |
-| `subagent-sync.test.ts` | 子智能体会话同步：`syncHostTools` 三选项、MCP 白名单收窄与降级 |
+| `subagent-sync.test.ts` | 子智能体会话同步：`syncHostTools` 三选项、MCP 默认全量继承 |
 | `workflow-tool-sync.test.ts` | `workflow` 工具 `background` 默认值随会话形态，`syncMode` 优先级链 |
 | `workflow-watch.test.ts` | `/workflows watch` 输出通道：headless 流式消息、UI 会话状态栏 |
+| `builtin-preview.test.ts` | 内置模式预览脚本可解析且与元数据一致 |
+| `acp-bridge.test.ts` | ACP/无 UI 会话检测与进度帧渲染 |
+| `consult-vm.test.ts` | `consult()` 运行时：live 抛 `CONSULT_PENDING`、重放命中、settled:false 重新挂起、`hashConsult` 身份 |
+| `consult-manager-state.test.ts` | `waiting_consult` 状态机：catch 尾分支、stop/resume 触点、冷启动恢复 |
+| `consult-resolve.test.ts` | `resolveConsult`/`markConsultFailed` 收口：原子性、代际校验、持久化先于恢复 |
+| `consult-review-chain.test.ts` | 自动审阅链：子代理落盘、token 预算、上限 5 次回落、陈旧链丢弃 |
+| `consult-control-tool.test.ts` | `workflow_control` reply/intervene：applied/resumed 标签、跨会话寻址、非法输入 |
+| `consult-delivery.test.ts` | 投递出口：consult-pending/review-ready/limit 消息与唤醒判定 |
+| `capability-publications.test.ts` | 能力契约生成文档零漂移 |
 | `zh-copy.test.ts` | 源码与 Web 控制台的全部工具描述、提示词与 UI 文案为中文 |

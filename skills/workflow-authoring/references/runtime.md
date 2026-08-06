@@ -9,6 +9,7 @@
 
 运行时提供 `agent`、`parallel`、`pipeline`、`workflow`、质量/控制 helper、`consult`、`phase`、`log`、`args`、`cwd`、受限的 `process.cwd()` 与 `budget`。导入、`require()`、文件系统模块、`Date.now()`、`Math.random()` 与无参 `new Date()` 不可用。Node VM 领域是实现基底，不是安全边界或公开 API。
 
+<a id="consult"></a>
 ## 咨询（consult）
 
 `consult(prompt, opts?)` 是运行中干预点：脚本执行到该行即中断（live 抛 `CONSULT_PENDING`，

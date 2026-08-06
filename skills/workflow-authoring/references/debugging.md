@@ -16,6 +16,8 @@
 | 从 `agent()` 结果读取的字段为 `undefined` | 未设置 `schema`；提示要求返回 JSON 并不会改变 `agent()` 返回原始文本这一事实 | [生命周期](lifecycle.md#serialization) |
 | 嵌套工作流失败 | 嵌套超过一层或共享限制耗尽 | [生命周期](lifecycle.md#nesting-and-shared-state) |
 | 检查点不显示表单 | 输入/选择/超时行为仅声明而未实现 | [生命周期](lifecycle.md#checkpoints) |
+| 运行在自动审阅后置 failed | 审阅子代理未能产出可解析的修改后脚本，或审阅 token 超出运行预算（`apply:"auto"`） | [运行时](runtime.md#consult) |
+| 咨询挂起后无人答复 | 超限回落 `waiting_consult` 等人工答复，或 `to:"main"` 等待主代理 reply | [运行时](runtime.md#consult) |
 | 返回的结果无法跨越边界 | 其中包含函数、Promise、循环引用、`BigInt` 或运行时对象 | [生命周期](lifecycle.md#serialization) |
 | `Date.now()`/随机性被拒绝 | 恢复要求确定性的调用结构 | [生命周期](lifecycle.md#resume) |
 

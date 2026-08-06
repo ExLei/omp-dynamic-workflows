@@ -37,7 +37,7 @@ export const WORKFLOW_AUTHORING_FROZEN_FILES = [
   },
   {
     path: "skills/workflow-authoring/references/runtime.md",
-    sha256: "7fe6f4779dcfcf35c8f180fcec2b59b1767b6a8fd7a418f38127c80a82f61d3a",
+    sha256: "390090bbdf7ee94f2c60399430c24f94d17e1ea62c3b5cbe79b71d19cdcc13e2",
   },
   {
     path: "skills/workflow-authoring/references/helpers.md",
@@ -65,11 +65,11 @@ export const WORKFLOW_AUTHORING_FROZEN_FILES = [
   },
   {
     path: "skills/workflow-authoring/references/review.md",
-    sha256: "92fd2c90a6763e32dec6a460e99da9f22bd49ef53d50bdd8e2aeb2356b57b86b",
+    sha256: "59c3cb12d76e3ad8dace084ac74081cb269a05386efd225a9a65451019c1c6d7",
   },
   {
     path: "skills/workflow-authoring/references/debugging.md",
-    sha256: "4df93d8722606960686f22d89ba88672300ae1e962176606840ec7362de32c0f",
+    sha256: "ee8d802953946e42e95997f4ce96e2540ade17ac803acd883117f3fdcb975739",
   },
   {
     path: "skills/workflow-authoring/examples/classify-and-act.js",
