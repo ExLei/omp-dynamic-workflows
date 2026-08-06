@@ -345,6 +345,17 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           emitFrame();
           throw new Error("Workflow was aborted");
         }
+        // consult() 暂停不是失败：同步路径把它转成按 to 分流的可读报错文案
+        // （裁定 8；runId 取自 payload.journalPrefix 的 `${runId}:` 前缀）。
+        // 缺 journalPrefix 的畸形 payload 不冒充 runId（旧代码会报「运行 - 已暂停」
+        // 而实际 run 已 failed）——直接 rethrow 原错误，失败大声化，与 manager 侧
+        // isConsultPendingPayload 的语义一致：同步路径同样不 park 畸形 consult。
+        if (error instanceof WorkflowError && error.code === WorkflowErrorCode.CONSULT_PENDING) {
+          const payload = error.payload as { journalPrefix?: string; opts?: { to?: "agent" | "main" } } | undefined;
+          if (!payload?.journalPrefix) throw error;
+          const runId = payload.journalPrefix.replace(/:$/, "");
+          throw new Error(consultPendingSyncText(runId, payload?.opts?.to));
+        }
         throw error;
       }
 
@@ -473,6 +484,18 @@ export function resumedText(name: string, runId: string): string {
     "and the conversation continues automatically. The user can wait or keep working.",
     `Track or cancel it with /workflows status ${runId} or /workflows stop ${runId}.`,
   ].join("\n");
+}
+
+/**
+ * 同步路径的 consult() 暂停文案，按 payload.opts.to 分流（任务 6 裁定 8）：
+ * "agent"（缺省）告知自动审阅链已在后台执行、结果以 follow-up 投递；"main" 指引
+ * 主代理用 workflow_control 的 reply 动作回复。同步路径不额外投递咨询消息——
+ * 错误即信号（避免双重信号），consult-pending 投递监听天然只对 background run 生效。
+ */
+export function consultPendingSyncText(runId: string, to: "agent" | "main" | undefined): string {
+  return to === "main"
+    ? `运行 ${runId} 已暂停等待主代理答复，请用 workflow_control 的 reply 动作回复（runId=${runId}），或用 /workflows status ${runId} 查看`
+    : `运行 ${runId} 已暂停等待咨询答复，自动审阅链已在后台执行，结果将以 follow-up 投递；也可用 /workflows status ${runId} 查看或经 Web 控制台介入`;
 }
 
 /**

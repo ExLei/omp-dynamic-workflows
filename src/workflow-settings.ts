@@ -65,6 +65,13 @@ export interface WorkflowSettings {
    */
   syncMode?: "auto" | "always" | "never";
   /**
+   * 后台运行阶段进度行投递开关（spec §7）：每个阶段开始时把上一阶段的进度行
+   * （阶段名、done/total、token 合计）投递进对话——"phase"（默认）开启、"off"
+   * 抑制。遵循「缺省即省略」不变量：仅显式合法值输出键，缺省语义由消费端
+   * （task-panel.ts phaseNotifyEnabled）?? 兜底。
+   */
+  phaseNotify?: "phase" | "off";
+  /**
    * Local web console (see src/web-server.ts). On by default: the marginal
    * startup cost is ~3ms (module eval + loopback bind), which is inside the
    * noise of omp's own launch, and the server shares the live WorkflowManager
@@ -271,6 +278,11 @@ export function normalizeSettings(value: unknown): WorkflowSettings {
   // （workflow-tool.ts backgroundDefault）?? 兜底。
   if (raw.syncMode === "auto" || raw.syncMode === "always" || raw.syncMode === "never") {
     settings.syncMode = raw.syncMode;
+  }
+  // phaseNotify 同走「缺省即省略」不变量：仅显式合法值输出键，未设置/非法值不
+  // 物化缺省（"phase"）——否则 merge 与 save 会写入用户从未设置的键。
+  if (raw.phaseNotify === "phase" || raw.phaseNotify === "off") {
+    settings.phaseNotify = raw.phaseNotify;
   }
   const web = normalizeWebSettings(raw.web);
   if (web) settings.web = web;

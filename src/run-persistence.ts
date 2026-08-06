@@ -48,18 +48,40 @@ export interface PersistedAgentState {
 /**
  * The pending consult() intervention point a run is parked on (status
  * "waiting_consult"), written by the manager's executeRun catch tail when a
- * CONSULT_PENDING error surfaces. resolveConsult fills revisedScript/summary
- * and bumps generation before the run is resumed; resume() rehydrates it onto
- * the ManagedRun so the continuation knows what it is answering. Persisted so
- * a waiting_consult run survives a cold restart (the user's answer must not
- * be lost with the process). Shared by PersistedRunState and ManagedRun so
- * the two shapes cannot drift.
+ * CONSULT_PENDING error surfaces (or created by intervene() with no call
+ * anchor). intervene() re-targets it to "main" and bumps generation;
+ * applyReviewChain records the review's summary on it; resolveConsult
+ * journals the outcome under it (skipping the journal write when it has no
+ * anchor) and clears it before the run is resumed. resume() rehydrates it
+ * onto the ManagedRun so the continuation knows what it is answering.
+ * Persisted so a waiting_consult run survives a cold restart (the user's
+ * answer must not be lost with the process). Shared by PersistedRunState
+ * and ManagedRun so the two shapes cannot drift.
  */
 export interface PendingConsult {
-  journalPrefix: string;
-  callIndex: number;
+  /**
+   * The journal namespace of the consult() call this pending consult answers,
+   * `${runId}:` (top level) or `${runId}-nestedN:` (a nested workflow frame) —
+   * see JournalEntry.runId. Absent on intervene()-created consults, which have
+   * no consult() call to anchor — resolveConsult then skips the journal write
+   * (there is no call whose outcome could be journaled). resolveConsult strips
+   * the trailing ":" to name the entry.
+   */
+  journalPrefix?: string;
+  /** The consult() call's positional index within its frame — see journalPrefix. */
+  callIndex?: number;
   prompt: string;
   opts: ConsultOptions;
+  /**
+   * Delivery override, set ONLY by intervene() when it re-targets a pending
+   * consult to "main". Deliberately separate from `opts.to`: opts is the
+   * script's ORIGINAL consult() call and is NEVER rewritten — resolveConsult
+   * computes the journaled hash from it, and replay recomputes the identical
+   * hash from the script's own consult() call, so rewriting opts.to would
+   * silently drop the answer (hash mismatch → re-pend). Delivery routing
+   * reads `to ?? opts.to`; the hash identity stays `opts`.
+   */
+  to?: "agent" | "main";
   revisedScript?: string;
   summary?: string;
   generation: number;

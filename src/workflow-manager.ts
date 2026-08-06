@@ -16,7 +16,15 @@ import {
   type RunPersistence,
   type RunStatus,
 } from "./run-persistence.js";
-import { type ConsultOptions, type JournalEntry, parseWorkflowScript, runWorkflow, type WorkflowRunResult } from "./workflow.js";
+import {
+  type ConsultOptions,
+  type ConsultOutcome,
+  hashConsult,
+  type JournalEntry,
+  parseWorkflowScript,
+  runWorkflow,
+  type WorkflowRunResult,
+} from "./workflow.js";
 
 /**
  * True when a CONSULT_PENDING payload carries the full waiting_consult
@@ -41,6 +49,23 @@ function isConsultPendingPayload(
   );
 }
 
+/**
+ * The journaled outcome a resolved consult() call returns (ConsultOutcome),
+ * built from the pending consult at resolution time. A "confirm"-apply consult
+ * adopts the review's revised script; every other shape (to:"main" replies,
+ * auto-apply over-limit fallbacks) continues with the original script —
+ * "维持原脚本继续" (spec §4). applyReviewChain records the review's summary on
+ * the pending consult so it lands here; the revisedScript is what a confirm
+ * flow stored on the pending consult (absent for user replies, which carry
+ * their edit as resolveConsult's script instead).
+ */
+function buildConsultOutcome(pending: PendingConsult): ConsultOutcome {
+  if (pending.opts.apply === "confirm") {
+    return { applied: true, revisedScript: pending.revisedScript, summary: pending.summary ?? "" };
+  }
+  return { applied: false, summary: "维持原脚本" };
+}
+
 export interface ManagedRun {
   runId: string;
   status: RunStatus;
@@ -51,10 +76,11 @@ export interface ManagedRun {
    * The pending consult() intervention point this run is parked on (status
    * "waiting_consult"). Written once by executeRun's catch tail when a
    * CONSULT_PENDING error surfaces (generation 0; fields taken from the
-   * error's payload). resolveConsult (later task) fills revisedScript/
-   * summary and bumps generation before resuming. Persisted with the run so
-   * a waiting_consult run survives a cold restart. Shape shared with
-   * PersistedRunState via run-persistence's PendingConsult.
+   * error's payload). intervene() re-targets it to "main" (generation+1);
+   * applyReviewChain records the review's summary on it; resolveConsult
+   * journals the outcome under it and clears it before resuming. Persisted
+   * with the run so a waiting_consult run survives a cold restart. Shape
+   * shared with PersistedRunState via run-persistence's PendingConsult.
    */
   pendingConsult?: PendingConsult;
   controller: AbortController;
@@ -940,6 +966,7 @@ export class WorkflowManager extends EventEmitter {
           this.emitLive(managed, "consult-pending", {
             runId: managed.runId,
             prompt: managed.pendingConsult?.prompt,
+            opts: managed.pendingConsult?.opts,
           });
         }
       } else if (managed.controller.signal.aborted) {
@@ -1233,6 +1260,359 @@ export class WorkflowManager extends EventEmitter {
   }
 
   /**
+   * Answer a waiting_consult run's intervention point — the single choke
+   * point (spec §4) through which every resolution flows: journal the outcome
+   * under the pending consult's call anchor, clear the pending consult, flip
+   * the run to paused, persist, and resume. Returns false when the run is not
+   * actually parked on a pending consult (already answered, completed,
+   * stopped…).
+   *
+   * `options.script` is the (possibly edited) script to resume with — the
+   * review reply or the user's own edit. When omitted, the persisted script
+   * resumes as-is ("维持原脚本继续"). A supplied script is validated here and
+   * a malformed one THROWS (the tool layer decides how to surface the error —
+   * keeping the run parked on waiting_consult). The state gate (waiting_consult
+   * + pending consult) runs FIRST, so a reply to a run that is no longer
+   * parked returns false even when the reply's script is malformed — the
+   * malformed-script throw is reserved for genuinely parked runs.
+   *
+   * `options.summary` and `options.expectedGeneration` are
+   * applyReviewChain()-specific additions (NOT part of the public reply
+   * contract, which is `{script?}`): the chain's review summary is merged
+   * into the pending consult before the outcome is built (so
+   * buildConsultOutcome() journals it), and the captured generation is
+   * re-validated INSIDE the same critical section that writes — a
+   * cross-process intervene that bumped the generation after the chain's own
+   * fast-fail check discards the stale chain (return false, zero side
+   * effects) instead of applying its script.
+   *
+   * Lock semantics (honest): the run lease is a CONSULT lock, not a general
+   * write lock — save() itself does not validate it (see run-persistence),
+   * and while a run is parked on waiting_consult the process holding the
+   * in-memory copy writes to disk WITHOUT the lease (intervene /
+   * markConsultFailed / resolveConsult funnel through persistRun →
+   * writeRunToDisk → save). The lease only serializes lease-holding writers
+   * (this disk branch and stop()'s disk branch); a peer's unlocked
+   * in-memory-path save landing between this branch's lease-held reload and
+   * save is a known residual µs-level window that the lease narrows but
+   * cannot fully close.
+   *
+   * Ordering matters: persistRun() runs BEFORE resume() because resume()
+   * rebuilds its journal exclusively from disk — an entry that only ever
+   * reached memory would be silently dropped when resume() reconstructs the
+   * run, and the user's answer would be lost to a re-pended consult. The
+   * resume() waiting_consult guard would deadlock this choke point, so the
+   * run is flipped to paused first (the existing paused-resumable path) — in
+   * memory, and on disk by the persist below.
+   */
+  async resolveConsult(
+    runId: string,
+    options?: { script?: string; summary?: string; expectedGeneration?: number },
+  ): Promise<boolean> {
+    const managed = this.runs.get(runId);
+    const persisted = this.persistence.load(runId);
+    const pending = managed?.pendingConsult ?? persisted?.pendingConsult;
+    const expectedGeneration = options?.expectedGeneration;
+
+    // State gate FIRST — before script validation: only a run parked on
+    // waiting_consult — in memory, or on disk after a cold start
+    // (recoverStaleRuns leaves waiting_consult runs parked) — with a pending
+    // consult may be answered. A reply to a completed/already-resolved run
+    // is refused by contract, and a malformed script in that reply must
+    // return false rather than throw.
+    if (!pending) return false;
+    if (managed) {
+      if (managed.status !== "waiting_consult") return false;
+    } else {
+      if (!persisted || persisted.status !== "waiting_consult") return false;
+    }
+
+    if (options?.script !== undefined) {
+      parseWorkflowScript(options.script); // throws on a malformed script
+    }
+
+    // Journal the outcome under the pending consult's call anchor — skipped
+    // for intervene()-created consults, which have no consult() call to
+    // answer (their prompt is the intervention itself, not a review reply).
+    // A chain-supplied `summary` (applyReviewChain) is merged into the
+    // pending consult BEFORE the outcome is built, so buildConsultOutcome()
+    // sees it.
+    const buildEntry = (p: PendingConsult): JournalEntry | undefined => {
+      const merged: PendingConsult =
+        options?.summary !== undefined ? { ...p, summary: options.summary } : p;
+      if (merged.callIndex !== undefined && merged.journalPrefix !== undefined) {
+        return {
+          index: merged.callIndex,
+          runId: merged.journalPrefix.replace(/:$/, ""),
+          hash: hashConsult(merged.prompt, merged.opts),
+          result: buildConsultOutcome(merged),
+        };
+      }
+      return undefined;
+    };
+
+    if (managed) {
+      // Memory path: ONE synchronous critical section — the generation
+      // re-check, summary merge, journal append, pending clear, status flip
+      // and persist below run with no await between them, so no in-process
+      // writer can interleave. applyReviewChain's own check is a fast-fail;
+      // this re-check (against the snapshot the write is built from) is the
+      // authoritative one.
+      if (expectedGeneration !== undefined && pending.generation !== expectedGeneration) {
+        return false;
+      }
+      const journalEntry = buildEntry(pending);
+      if (journalEntry) managed.journal = [...managed.journal, journalEntry];
+      delete managed.pendingConsult;
+      managed.status = "paused";
+      // Disk must carry paused + no pending + the journal entry BEFORE
+      // resume() runs (resume()'s journal source is disk alone).
+      this.persistRun(managed);
+    } else {
+      // Disk-only cold-start path: no in-memory object to flip — flip the
+      // persisted state directly (same lease-protected pattern as stop()'s
+      // disk branch). resume() below then materializes the run itself.
+      const lease = this.persistence.acquireRunLease(runId);
+      if (!lease) return false;
+      try {
+        // ONE lease-held critical section: "reload → status gate → generation
+        // re-check → summary merge → journal → clear → paused → save" is a
+        // single write, so the state the journal entry is built from is the
+        // state that gets saved — no separate two-phase write can split it.
+        // (load() holds no lock and save() does not check it either — see the
+        // lock-semantics note in the doc comment: the lease narrows, but a
+        // peer's unlocked in-memory-path save landing between this reload and
+        // save is a documented residual µs-level window.)
+        const latest = this.persistence.load(runId);
+        if (!latest || latest.status !== "waiting_consult") return false;
+        // Cross-process generation re-check (see expectedGeneration above):
+        // an intervene in another process may have bumped the generation
+        // after applyReviewChain's fast-fail check — the stale chain's script
+        // must not be applied (return false, no journal write, no state
+        // touched).
+        if (expectedGeneration !== undefined && latest.pendingConsult?.generation !== expectedGeneration) {
+          return false;
+        }
+        const journalEntry = latest.pendingConsult ? buildEntry(latest.pendingConsult) : undefined;
+        this.persistence.save({
+          ...latest,
+          status: "paused",
+          pendingConsult: undefined,
+          ...(journalEntry ? { journal: [...(latest.journal ?? []), journalEntry] } : {}),
+          updatedAt: new Date().toISOString(),
+        });
+      } finally {
+        this.persistence.releaseRunLease(lease);
+      }
+    }
+
+    // Resume from the persisted (or edited) script. The persist above already
+    // flipped disk to paused, so resume()'s status guards and journal source
+    // see the resolved state, not waiting_consult.
+    return this.resume(runId, options?.script !== undefined ? { script: options.script } : undefined);
+  }
+
+  /**
+   * Mark a waiting_consult run's review as failed (no answer produced):
+   * journal a settled:false outcome under the pending consult's anchor (so a
+   * later resume REPENDS the consult instead of replaying past it — see the
+   * settled:false semantics in workflow.ts's consult()), clear the pending
+   * consult, fail the run, persist, mark it terminal, and emit an error
+   * event. Returns without doing anything when the run is not parked on a
+   * pending consult.
+   */
+  async markConsultFailed(runId: string, reason: string): Promise<void> {
+    const managed = this.runs.get(runId);
+    const persisted = this.persistence.load(runId);
+    const pending = managed?.pendingConsult ?? persisted?.pendingConsult;
+
+    if (!pending) return;
+
+    let journalEntry: JournalEntry | undefined;
+    if (pending.callIndex !== undefined && pending.journalPrefix !== undefined) {
+      journalEntry = {
+        index: pending.callIndex,
+        runId: pending.journalPrefix.replace(/:$/, ""),
+        hash: hashConsult(pending.prompt, pending.opts),
+        result: { applied: false, reason, settled: false },
+      };
+    }
+
+    const error = new WorkflowError(reason, WorkflowErrorCode.WORKFLOW_ABORTED, { recoverable: true });
+    if (managed) {
+      if (managed.status !== "waiting_consult") return;
+      if (journalEntry) managed.journal = [...managed.journal, journalEntry];
+      delete managed.pendingConsult;
+      managed.status = "failed";
+      managed.error = error;
+      this.persistRun(managed);
+      // Emit BEFORE recordTerminalRun(), mirroring executeRun()'s catch tail
+      // (emit → persist → record). In the failed → resume → re-terminal
+      // scenario the runId is already in the terminal queue; recordTerminalRun's
+      // push-shift can then evict this very runId, making emitLive()'s
+      // isCurrent() check fail and silently dropping the error event. Emitting
+      // while the run is still current guarantees delivery.
+      if (this.listenerCount("error") > 0) this.emitLive(managed, "error", { runId, error });
+      this.recordTerminalRun(runId);
+    } else {
+      if (!persisted || persisted.status !== "waiting_consult") return;
+      const lease = this.persistence.acquireRunLease(runId);
+      if (!lease) return;
+      try {
+        this.persistence.save({
+          ...persisted,
+          status: "failed",
+          pendingConsult: undefined,
+          ...(journalEntry ? { journal: [...(persisted.journal ?? []), journalEntry] } : {}),
+          updatedAt: new Date().toISOString(),
+        });
+      } finally {
+        this.persistence.releaseRunLease(lease);
+      }
+      // Disk-only cold-start path: the state transition happened with no
+      // in-memory execution (and none superseded), so there is no
+      // isCurrent()-style stale execution whose event could mislead — a plain
+      // guarded emit is the correct ownership, and matches the memory path's
+      // error-event contract. Guarded like executeRun's catch tail:
+      // EventEmitter throws on an unlistened "error" emit.
+      this.recordTerminalRun(runId);
+      if (this.listenerCount("error") > 0) this.emit("error", { runId, error });
+    }
+  }
+
+  /**
+   * Intervene on a running/paused workflow: park it on waiting_consult with a
+   * to:"main" pending consult (no call anchor — there is no consult() call to
+   * answer), persist, THEN abort the controller so the execution stops at its
+   * next cooperative checkpoint. The catch tail's abort branch only rewrites
+   * status when it is still "running", so the waiting_consult status set here
+   * is preserved. On an already-waiting_consult run, re-target DELIVERY to
+   * "main" via the `to` override field and bump the generation — invalidating
+   * any in-flight review chain that captured the older generation
+   * (applyReviewChain drops it). The pending opts are never rewritten: they
+   * ARE the hash identity resolveConsult journals and replay recomputes, so
+   * rewriting them would silently discard the answer (replay miss → re-pend).
+   * Returns false when the run is not in a reachable state.
+   */
+  intervene(runId: string): boolean {
+    const managed = this.runs.get(runId);
+    if (managed) {
+      if (managed.status === "running" || managed.status === "paused") {
+        managed.status = "waiting_consult";
+        managed.pendingConsult = {
+          prompt: "用户主动介入",
+          opts: { to: "main" },
+          generation: (managed.pendingConsult?.generation ?? 0) + 1,
+        };
+        this.persistRun(managed);
+        // After persist — the catch tail keeps the waiting_consult status we
+        // just set (its abort branch only overwrites "running").
+        managed.controller.abort();
+        return true;
+      }
+      if (managed.status === "waiting_consult") {
+        const existing = managed.pendingConsult;
+        if (!existing) return false;
+        // Re-target DELIVERY to "main" via the `to` override field — never
+        // by rewriting opts.to. The pending opts are the script's ORIGINAL
+        // consult() call: resolveConsult hashes them, and replay recomputes
+        // the identical hash from the script's own call, so rewriting opts.to
+        // would corrupt the hash identity and silently drop the answer
+        // (replay miss → re-pend). Delivery routing reads `to ?? opts.to`.
+        managed.pendingConsult = {
+          ...existing,
+          to: "main",
+          generation: existing.generation + 1,
+        };
+        this.persistRun(managed);
+        return true;
+      }
+      return false;
+    }
+
+    // Disk-only fallback: the run lives in another process (or a prior pi
+    // session) — flip the persisted state directly (same lease-protected
+    // pattern as stop()'s disk branch).
+    const persisted = this.persistence.load(runId);
+    if (
+      !persisted ||
+      (persisted.status !== "running" && persisted.status !== "paused" && persisted.status !== "waiting_consult")
+    ) {
+      return false;
+    }
+    const lease = this.persistence.acquireRunLease(runId);
+    if (!lease) return false;
+    try {
+      const existing = persisted.pendingConsult;
+      this.persistence.save({
+        ...persisted,
+        status: "waiting_consult",
+        pendingConsult:
+          persisted.status === "waiting_consult" && existing
+            ? { ...existing, to: "main", generation: existing.generation + 1 }
+            : { prompt: "用户主动介入", opts: { to: "main" }, generation: (existing?.generation ?? 0) + 1 },
+        updatedAt: new Date().toISOString(),
+      });
+    } finally {
+      this.persistence.releaseRunLease(lease);
+    }
+    return true;
+  }
+
+  /**
+   * Apply a finished review chain's result to a waiting_consult run. The
+   * chain captured `generation` when it started; if the run has since been
+   * re-targeted by intervene() (generation bumped), the result is stale and
+   * is DISCARDED — returns false without journaling or touching state (tmp
+   * cleanup is the caller's job).
+   *
+   * Pure validation + delegation: a fast-fail check (pending consult exists,
+   * captured generation still matches) then a hand-off to resolveConsult(),
+   * the single choke point, with the chain's `summary` and `expectedGeneration`
+   * — resolveConsult merges the summary into the pending consult,
+   * re-validates the generation, journals the outcome, clears the pending
+   * consult, flips the run to paused, persists, and resumes, all inside ONE
+   * critical section (synchronous in memory; one lease-held reload→save on
+   * the disk branch). There is deliberately no separate summary write here:
+   * the old two-phase write (chain persists the summary, then resolveConsult
+   * re-validates and resolves) left a window in which a peer's unlocked write
+   * could land between the two saves and be clobbered — closed by
+   * construction now.
+   *
+   * Lock semantics (honest): the lease is a CONSULT lock — save() does not
+   * validate it, and the in-memory run holder writes to disk WITHOUT the
+   * lease while the run is parked on waiting_consult (intervene /
+   * markConsultFailed / resolveConsult funnel through persistRun → save). The
+   * lease therefore only serializes lease-holding writers; a peer's unlocked
+   * save landing between this disk branch's lease-held reload and save is a
+   * known residual µs-level window, documented in resolveConsult's doc
+   * comment — not a closed serialization guarantee.
+   */
+  async applyReviewChain(
+    runId: string,
+    options: { generation: number; script?: string; summary: string },
+  ): Promise<boolean> {
+    // Fast-fail: no pending consult, or a generation bump since the chain
+    // captured it (a re-target to main) — discard the stale chain before any
+    // write. The authoritative re-check happens inside resolveConsult's
+    // critical section; this is an early-out for the common stale case.
+    const managed = this.runs.get(runId);
+    const persisted = this.persistence.load(runId);
+    const pending = managed?.pendingConsult ?? persisted?.pendingConsult;
+    if (!pending || pending.generation !== options.generation) return false;
+
+    return this.resolveConsult(runId, {
+      ...(options.script !== undefined ? { script: options.script } : {}),
+      summary: options.summary,
+      // Re-validated inside resolveConsult's critical section (the memory
+      // path's synchronous check, or the disk branch's lease-held reload): a
+      // peer intervene that bumped the generation after this fast-fail check
+      // discards the stale chain — return false, zero side effects.
+      expectedGeneration: options.generation,
+    });
+  }
+
+  /**
    * Pause a running workflow.
    */
   pause(runId: string): boolean {
@@ -1279,6 +1659,28 @@ export class WorkflowManager extends EventEmitter {
       persisted.status === "aborted" ||
       persisted.status === "waiting_consult"
     ) {
+      return false;
+    }
+
+    // A consult that failed without an answer (markConsultFailed) journaled a
+    // settled:false outcome — replay treats it as a miss, so a plain resume
+    // would RE-PEND the consult at that call index with no progress. The user
+    // never answered it, so silently skipping past it is wrong: refuse plain
+    // resume (no script, or a byte-identical one). Resuming with an EDITED
+    // script is the sanctioned path — the edit makes the replay hash-miss and
+    // re-raise the consult with the NEW prompt, which the user then answers
+    // through resolveConsult. Only the LAST journal entry is consulted: a
+    // resolved re-pend shadows its failed predecessor (the replay Map keys by
+    // call index and the later write wins).
+    const journal = persisted.journal ?? [];
+    const lastEntry = journal[journal.length - 1];
+    const hasUnsettledConsult =
+      lastEntry !== undefined &&
+      typeof lastEntry.result === "object" &&
+      lastEntry.result !== null &&
+      "settled" in lastEntry.result &&
+      lastEntry.result.settled === false;
+    if (hasUnsettledConsult && (opts?.script === undefined || opts.script === persisted.script)) {
       return false;
     }
     const lease = this.persistence.acquireRunLease(runId);

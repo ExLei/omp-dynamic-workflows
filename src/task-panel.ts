@@ -140,6 +140,32 @@ function deliveredMaxChars(opts: { loadSettings?: () => WorkflowSettings }): num
 }
 
 /**
+ * 把工作流相关消息投递回对话——installResultDelivery 内部 deliver 的同款
+ * sendMessage 调用（display:true + deliverAs:"followUp"），customType 参数化。
+ * 任务 4 的自动审阅链与任务 6 的 consult / phaseNotify 投递共用此出口。
+ * 失败（如 /reload 后 ctx 失效）静默吞掉：结果仍可经 /workflows 查看。
+ */
+export function deliverWorkflowMessage(
+  pi: ExtensionAPI,
+  runId: string,
+  text: string,
+  opts: { triggerTurn: boolean; customType?: string },
+): void {
+  try {
+    const ret = pi.sendMessage(
+      { customType: opts.customType ?? "workflow-result", content: text, display: true },
+      { triggerTurn: opts.triggerTurn, deliverAs: "followUp" },
+    );
+    // sendMessage may return a promise; a sync try/catch can't catch its
+    // rejection, so swallow the async path too. A stale ctx after /reload is
+    // the expected failure — the result is still visible via /workflows.
+    void Promise.resolve(ret).catch(() => {});
+  } catch {
+    // Synchronous failure (e.g. stale ctx) — result still visible via /workflows.
+  }
+}
+
+/**
  * When a background run finishes (or fails), deliver its result back into the
  * conversation AND continue the turn so the assistant can act on it — without
  * blocking the user meanwhile:
@@ -205,11 +231,54 @@ export function installResultDelivery(
     }
   };
 
+  // ─── phaseNotify：按 runId 记 lastPhase，跨 phase 边界补投上一 phase 进度行 ─────
+  // spec §7：每个 phase 开始时投递上一 phase 的进度行（阶段名、done/total、token
+  // 从快照取——取法同 renderPanel 的 aggregateAgentUsage）；运行完成 / 进入
+  // waiting_consult 时补投当前 phase 行。进度行一律 triggerTurn:false（裁定 3）。
+  // phaseNotify: "off" 抑制全部进度行（默认 "phase" 开启；settings normalize 遵循
+  // 缺省即省略，消费端 ?? 兜底）。
+  const lastPhaseByRun = new Map<string, string>();
+  // 与 deliveredMaxChars 同款防御：宿主 loader 抛错时按默认 "phase"（开启）处理，
+  // 绝不让 phaseNotify 判定本身把健康后台 run 判 failed（onPhase→phase()→executeRun
+  // catch 的投递链）或使 complete/consult-pending 的补投静默丢失。
+  const phaseNotifyEnabled = (): boolean => {
+    try {
+      return m.__holder?.loadSettings?.()?.phaseNotify !== "off";
+    } catch {
+      return true;
+    }
+  };
+
+  const deliverPhaseRow = (runId: string, title: string) => {
+    const snap = manager.getRun(runId)?.snapshot;
+    if (!snap) return;
+    const agents = snap.agents.filter((a) => a.phase === title);
+    const done = agents.filter((a) => a.status === "done").length;
+    const { fresh, cacheRead } = aggregateAgentUsage(agents);
+    const tokens = fresh + cacheRead > 0 ? `，累计 ${compactTokens(fresh + cacheRead)} tok` : "";
+    deliverWorkflowMessage(
+      m.__holder?.pi ?? pi,
+      runId,
+      `工作流 ${runId} 阶段「${title}」完成：${done}/${agents.length} agents${tokens}`,
+      { triggerTurn: false },
+    );
+  };
+
+  /** 补投当前 phase 行（phaseNotify 开启且该 run 已记录 lastPhase 时）。 */
+  const flushPhaseRow = (runId: string) => {
+    if (!phaseNotifyEnabled()) return;
+    const last = lastPhaseByRun.get(runId);
+    if (last) deliverPhaseRow(runId, last);
+  };
+
   manager.on("complete", ({ runId }: { runId: string }) => {
     const run = manager.getRun(runId);
     // Only background/resumed runs are delivered: a foreground (sync) run already
     // returns its result inline as the tool result, so re-delivering would dup it.
     if (run?.background) {
+      // 运行完成时补投当前 phase 行（spec §7），再投结果。
+      flushPhaseRow(runId);
+      lastPhaseByRun.delete(runId);
       deliver(
         deliverText(run, {
           resultPath: persistedResultPath(manager, runId),
@@ -221,6 +290,9 @@ export function installResultDelivery(
   });
   manager.on("error", ({ runId, error }: { runId: string; error?: { message?: string } }) => {
     if (!manager.getRun(runId)?.background) return;
+    // 闭合 lastPhaseByRun 条目：error/stopped 与 complete 同样终结 run，残留的
+    // phase 行会在（本不该发生的）后续补投里泄露陈旧进度。
+    lastPhaseByRun.delete(runId);
     deliver(`✗ Background workflow ${runId} failed: ${error?.message ?? "unknown error"}`, {
       triggerTurn: wakesTurn(runId),
     });
@@ -231,6 +303,7 @@ export function installResultDelivery(
   // with triggerTurn:false so nothing starts investigating a deliberate stop.
   manager.on("stopped", ({ runId }: { runId: string }) => {
     if (!manager.getRun(runId)?.background) return;
+    lastPhaseByRun.delete(runId);
     deliver(`- Background workflow ${runId} stopped by the user. No result was produced.`, {
       triggerTurn: false,
     });
@@ -259,6 +332,73 @@ export function installResultDelivery(
       deliver(
         `|| Background workflow ${runId} paused: ${cause}${when}. ` +
           `Completed steps are saved — run /workflows resume ${runId} once your usage limit resets.`,
+      );
+    },
+  );
+  // 每个 phase 开始时投递上一 phase 的进度行（spec §7；首个 phase 无上一行）。
+  // 进度行属投递过滤范畴：仅 background run（同步 run 的进度已由工具内联帧呈现）。
+  manager.on("phase", ({ runId, title }: { runId: string; title: string }) => {
+    if (!phaseNotifyEnabled()) return;
+    if (!manager.getRun(runId)?.background) return;
+    const last = lastPhaseByRun.get(runId);
+    if (last) deliverPhaseRow(runId, last);
+    lastPhaseByRun.set(runId, title);
+  });
+  // consult() 暂停：先补投当前 phase 行、再发咨询消息（顺序保证——用户先见进度、
+  // 后见咨询）。customType=workflow.consult；triggerTurn 按 wakesTurn 判定（web
+  // 控制台启动的 run 经 isSilentOrigin 不唤醒）。
+  // to:"agent" 且非 confirm 的咨询由自动审阅链在 manager 内部自治（结果经
+  // complete/error 事件投递）——这里不投递也不唤醒，否则任务 4 落地后每次 agent
+  // 咨询都会错误唤醒主代理回合（§4「to:main/confirm 才 triggerTurn」）。
+  manager.on(
+    "consult-pending",
+    ({
+      runId,
+      prompt,
+      opts,
+    }: {
+      runId: string;
+      prompt?: unknown;
+      opts?: { to?: "agent" | "main"; apply?: "auto" | "confirm" };
+    }) => {
+      if (!manager.getRun(runId)?.background) return;
+      if (opts?.to === "agent" && opts.apply !== "confirm") return;
+      flushPhaseRow(runId);
+      deliverWorkflowMessage(
+        m.__holder?.pi ?? pi,
+        runId,
+        `工作流 ${runId} 在等待咨询答复：${String(prompt).slice(0, 200)}\n` +
+          `请用 workflow_control 的 reply 动作回复（runId=${runId}），或经 Web 控制台介入。`,
+        { triggerTurn: wakesTurn(runId), customType: "workflow.consult" },
+      );
+    },
+  );
+  // 自动审阅超限（任务 4 将发射该事件，监听先 wire 好）：审阅链在 manager 内部
+  // 走到人工兜底——投递「等待人工答复」并唤醒主代理（结果经后续 complete/error
+  // 事件投递，这里只发超限通知）。
+  manager.on("consult-limit", ({ runId }: { runId: string }) => {
+    if (!manager.getRun(runId)?.background) return;
+    deliverWorkflowMessage(
+      m.__holder?.pi ?? pi,
+      runId,
+      `工作流 ${runId} 自动审阅超限，等待人工答复。\n` +
+        `请用 workflow_control 的 reply 动作回复（runId=${runId}），或经 Web 控制台介入。`,
+      { triggerTurn: wakesTurn(runId) },
+    );
+  });
+  // confirm 模式第二条消息（任务 4 后续触发）：建议已就绪——摘要 + 落盘路径 +
+  // 「reply 不附 script 即采纳」。triggerTurn 同 wakesTurn 判定。
+  manager.on(
+    "consult-review-ready",
+    ({ runId, summary, revisedPath }: { runId: string; summary?: string; revisedPath?: string }) => {
+      if (!manager.getRun(runId)?.background) return;
+      deliverWorkflowMessage(
+        m.__holder?.pi ?? pi,
+        runId,
+        `工作流 ${runId} 的咨询建议已就绪：${summary ?? ""}\n` +
+          `建议脚本已保存至 ${revisedPath ?? "（未落盘）"}。` +
+          `若采纳，用 workflow_control 的 reply 动作回复（runId=${runId}，不附 script）即可。`,
+        { triggerTurn: wakesTurn(runId) },
       );
     },
   );

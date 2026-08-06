@@ -125,7 +125,7 @@ describe("waiting_consult state machine", () => {
     try {
       const manager = new WorkflowManager({ cwd });
       const errors: unknown[] = [];
-      const consultPending: Array<{ runId: string; prompt: string }> = [];
+      const consultPending: Array<{ runId: string; prompt: string; opts?: { to?: "agent" | "main" } }> = [];
       manager.on("error", (e) => errors.push(e));
       manager.on("consult-pending", (e) => consultPending.push(e));
 
@@ -144,7 +144,8 @@ describe("waiting_consult state machine", () => {
       });
       // A consult pause is a review gate, never a failure: no error event.
       expect(errors).toEqual([]);
-      expect(consultPending).toEqual([{ runId, prompt: "q" }]);
+      // 双审查发现 2：consult-pending 事件携带 opts（投递侧按 to/apply 分流）。
+      expect(consultPending).toEqual([{ runId, prompt: "q", opts: { to: "agent" } }]);
 
       // The waiting_consult state and pending consult survive a disk round-trip.
       const persisted = manager.getPersistence().load(runId);
