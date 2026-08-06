@@ -37,7 +37,10 @@ const threshold = (args && args.threshold) || 0.5
 
 phase('Investigate')
 const investigation = await agent(
-  'Investigate the following and list concrete, individually-checkable findings:\\n' + task,
+  'Investigate the following and list concrete, individually-checkable findings:\\n' + task +
+  '\\n\\nIf the task concerns code in this repository, map the relevant symbols and their impact first: ' +
+  'codegraph_explore "<query>" (or bash: codegraph explore "<query>"), then read/grep to verify; ' +
+  'use lsp (hover/references) to locate symbols precisely when available.',
   { label: 'investigate', schema: { type: 'object', properties: { findings: { type: 'array', items: { type: 'string' } } }, required: ['findings'] } }
 )
 const findings = investigation.findings || []
@@ -89,7 +92,13 @@ export function generateMultiPerspectiveWorkflow(topic: string, perspectives: st
           .replace(/[^a-z0-9]+/g, "-")
           .replace(/^-+|-+$/g, "")
           .slice(0, 20) || `perspective-${i + 1}`;
-      return `  () => agent(${JSON.stringify(`Analyze from ${p} perspective: `)} + topic, { label: ${JSON.stringify(label)} }),`;
+      const prompt =
+        `Analyze from ${p} perspective: ` +
+        topic +
+        `\n\nIf this topic concerns code in this repository, map the relevant symbols first: ` +
+        `codegraph_explore "<query>" (or bash: codegraph explore "<query>"), then read/grep to verify; ` +
+        `use lsp (hover/references) for precise symbol location when available.`;
+      return `  () => agent(${JSON.stringify(prompt)}, { label: ${JSON.stringify(label)} }),`;
     })
     .join("\n");
 

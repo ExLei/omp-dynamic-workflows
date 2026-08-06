@@ -455,7 +455,15 @@ export function generateCodebaseAuditWorkflow(scope: string, checks: string[]): 
           .replace(/[^a-z0-9]+/g, "-")
           .replace(/^-+|-+$/g, "")
           .slice(0, 20) || `check-${i + 1}`;
-      return `  () => agent(${JSON.stringify(`Audit ${check} across: `)} + scope, { label: ${JSON.stringify(label)} }),`;
+      const prompt = `Audit the following concern across the codebase at: ${scope}
+
+Concern: ${check}
+
+Method (use in order):
+1. codegraph_explore "<targeted query about this concern's area: symbols, callers, callees, state>" (or bash: codegraph explore "<query>") to map the symbols and blast radius. If codegraph is unavailable or has no index, fall back to glob/grep/read.
+2. Read the relevant files and trace call paths across files; use lsp (hover/references) to locate symbols precisely when available.
+3. Verify every finding against actual code; cite file:line evidence. Report only confirmed findings; mark unverifiable claims as uncertain.`;
+      return `  () => agent(${JSON.stringify(prompt)}, { label: ${JSON.stringify(label)} }),`;
     })
     .join("\n");
 

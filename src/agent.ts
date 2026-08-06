@@ -285,6 +285,12 @@ export interface WorkflowAgentOptions {
   syncHostTools?: boolean;
   /** 子代理会话启用 IRC（对应 settings.enableIrc，默认 false）。 */
   enableIrc?: boolean;
+  /**
+   * 子代理会话启用 LSP（对应 settings.enableLsp，默认 true）。开启后子代理
+   * 获得 lsp 设备（符号定位/重命名/引用），供 codegraph 影响面分析后的精确
+   * 操作使用；显式 false 可关闭（无语言服务器的环境）。
+   */
+  enableLsp?: boolean;
 }
 
 // OMP accepts a ModelRegistry directly. Build one lazily from the same
@@ -616,6 +622,8 @@ export class WorkflowAgent {
   private readonly syncHostTools: boolean;
   /** 子代理会话启用 IRC（settings.enableIrc，默认 false）。 */
   private readonly enableIrc: boolean;
+  /** 子代理会话启用 LSP（settings.enableLsp，默认 false）。 */
+  private readonly enableLsp: boolean;
   /** Lazily built once; shares the SDK's agentDir/auth so resolved models are authed. */
   private registry?: ModelRegistry;
   /**
@@ -647,6 +655,7 @@ export class WorkflowAgent {
     this.sharedRegistry = options.modelRegistry;
     this.syncHostTools = options.syncHostTools ?? true;
     this.enableIrc = options.enableIrc ?? false;
+    this.enableLsp = options.enableLsp ?? true;
   }
 
   /**
@@ -899,8 +908,13 @@ export class WorkflowAgent {
     const injectedCustomTools = this.sessionOptions.customTools ?? [];
     const allCustomTools = [...injectedCustomTools, ...customTools];
     const deniedTools = new Set(subagentExcludedTools(this.excludeTools));
+    // LSP 工具不在 OMP_CODING_TOOL_NAMES 默认集里，SDK 只在显式 requestedTools
+    // 含 "lsp" 时才创建它；enableLsp 开启时把它加入工具面，否则子代理即使
+    // enableLsp=true 也没有 lsp 设备可用。
+    const lspToolNames = this.enableLsp ? (["lsp"] as const) : ([] as const);
     const toolNames = [
       ...nativeToolNames,
+      ...lspToolNames,
       ...allCustomTools.map((tool) => tool.name),
     ].filter((name, index, names) => !deniedTools.has(name) && names.indexOf(name) === index);
     // Shared subagent settings: used both for the session and to pre-discover
@@ -938,8 +952,9 @@ export class WorkflowAgent {
             preloadedExtensionPaths: await this.resolveSubagentExtensionPaths(settings, agentDir),
             enableMCP: true,
             enableIrc: this.enableIrc,
-            // 保持子代理无 LSP，行为不漂移（移植版原本就未启用 LSP）。
-            enableLsp: false,
+            // LSP 默认开启：子代理获得 lsp 设备（符号定位/重命名/引用），
+            // 配合 codegraph 影响面分析；settings.enableLsp=false 可显式关闭。
+            enableLsp: this.enableLsp,
             restrictToolNames: false,
           }
         : {

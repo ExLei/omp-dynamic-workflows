@@ -112,7 +112,15 @@ const mockPi = {
     inMemory: () => ({}),
   },
   discoverAuthStorage: async () => ({}),
-  ModelRegistry: class {},
+  // The real model-tier resolution path calls getAll() when
+  // ~/.omp/workflows/model-tiers.json exists on the machine running the tests;
+  // an empty registry keeps tier resolution from throwing (untagged agents
+  // degrade to onModelFallback instead of failing).
+  ModelRegistry: class {
+    getAll() {
+      return [];
+    }
+  },
   getActiveSkills: () => activeSkills,
   discoverSessionExtensionPaths: async () => [...discoveredExtensionPaths],
   async createAgentSession(options: Record<string, unknown>) {
@@ -162,9 +170,10 @@ describe("subagent session syncHostTools", () => {
     expect(opts.enableIrc).toBe(true);
     // restrictToolNames: false is required for preloadedExtensionPaths /
     // extension tools to survive (true short-circuits them in the SDK); the
-    // denylist is restored post-creation instead. LSP stays off (no drift).
+    // denylist is restored post-creation instead. LSP defaults on for
+    // subagents (enableLsp ?? true).
     expect(opts.restrictToolNames).toBe(false);
-    expect(opts.enableLsp).toBe(false);
+    expect(opts.enableLsp).toBe(true);
     // The plugin's own extension entry is excluded from the preloaded paths.
     expect(opts.preloadedExtensionPaths).toEqual(["/y/other-plugin/ext.ts"]);
     // Existing session params are preserved alongside the new channel.
@@ -214,11 +223,12 @@ describe("subagent session syncHostTools", () => {
     const opts = lastCall();
     expect(opts.skills).toEqual(activeSkills);
     expect(opts.disableExtensionDiscovery).toBe(false);
-    // MCP 默认全量（白名单已于 2026-08-06 移除）；enableIrc ?? false 保持 IRC 关。
+    // MCP 默认全量（白名单已于 2026-08-06 移除）；enableIrc ?? false 保持 IRC 关；
+    // enableLsp ?? true 默认开（子代理 LSP 能力）。
     expect(opts.enableMCP).toBe(true);
     expect(opts.enableIrc).toBe(false);
     expect(opts.restrictToolNames).toBe(false);
-    expect(opts.enableLsp).toBe(false);
+    expect(opts.enableLsp).toBe(true);
     expect(opts.preloadedExtensionPaths).toEqual(["/y/other-plugin/ext.ts"]);
   });
 
@@ -242,7 +252,7 @@ describe("subagent session syncHostTools", () => {
       expect(opts.enableMCP).toBe(true);
       expect(opts.enableIrc).toBe(true);
       expect(opts.restrictToolNames).toBe(false);
-      expect(opts.enableLsp).toBe(false);
+      expect(opts.enableLsp).toBe(true);
       expect(opts.preloadedExtensionPaths).toEqual(["/y/other-plugin/ext.ts"]);
     } finally {
       rmSync(cwd, { recursive: true, force: true });

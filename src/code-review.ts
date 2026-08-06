@@ -126,7 +126,15 @@ const reportSchema = {
 const diffBlock = '\\n\\n<diff source=\\"' + diffSource + '\\"' + (diffTruncated ? ' truncated=\\"true\\"' : '') + '>\\n' +
   diff + (diffTruncated ? '\\n\\n[... diff truncated: ' + (rawDiff.length - MAX_DIFF_CHARS) + ' more characters omitted ...]' : '') +
   '\\n</diff>\\n'
-const base = 'Use the read/grep tools to pull in any additional file context you need.' + diffBlock
+// 智能工具引导：codegraph 建立影响面（跨文件调用链），lsp 精确定位符号，
+// read/grep 验证实现细节。机械/结构性改写用 ast_edit（本工作流以审查为主，
+// 不涉及改写，但 finder 评估影响面时 ast_edit 无必要——列出前两者即可）。
+const base = 'Pull in any additional file context you need — in order of preference: ' +
+  'codegraph_explore "<query about the symbols the diff touches: callers, callees, blast radius>" ' +
+  '(or bash: codegraph explore "<query>") to map cross-file impact; ' +
+  'then read/grep the exact files to verify implementation details. ' +
+  'If you need to locate a symbol precisely across files, use lsp (hover/references) when available.' +
+  diffBlock
 
 // ───── Finder 池：3 正确性 + 1 合并 cleanup（D/E/F 三透镜）+ 可选 altitude（G）─────
 // cleanup 单 finder 覆盖全部 cleanup 透镜、上限 = 透镜数 × perAngle（与旧每透镜

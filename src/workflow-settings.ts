@@ -54,6 +54,12 @@ export interface WorkflowSettings {
   /** 子代理会话启用 IRC 通信（默认 false）。 */
   enableIrc?: boolean;
   /**
+   * 子代理会话启用 LSP（默认 true）。工作流子代理获得 lsp 设备
+   * （符号定位/重命名/引用），配合 codegraph 影响面分析与 ast_edit 机械改写。
+   * 显式 false 可关闭（无语言服务器的环境）。
+   */
+  enableLsp?: boolean;
+  /**
    * 同步/后台执行兜底开关（规格决策记录第 2 节预留项，V1 实测触发）：
    * "always" 强制同步执行（进度帧流式显示，ACP 会话可实时看到进展）、
    * "never" 强制后台（立即返回、结果后投递）、缺省 "auto" 维持现状判定
@@ -267,6 +273,9 @@ export function normalizeSettings(value: unknown): WorkflowSettings {
   }
   if (typeof raw.enableIrc === "boolean") {
     settings.enableIrc = raw.enableIrc;
+  }
+  if (typeof raw.enableLsp === "boolean") {
+    settings.enableLsp = raw.enableLsp;
   }
   // syncMode 同走「缺省即省略」不变量：仅显式合法值输出键，非法值/未设置不物化
   // 缺省（auto）——否则 merge 与 save 会写入用户从未设置的键。auto 语义由消费端

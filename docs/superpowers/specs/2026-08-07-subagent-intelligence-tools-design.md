@@ -52,15 +52,15 @@
 
 ### 2. 动态编排工作流修复（omp-dynamic-workflows）
 
-**B1：LSP 可配置，默认跟随主会话**
+**B1：LSP 可配置，默认开启**
 - `src/agent.ts`：`WorkflowAgentOptions` 增加 `enableLsp?: boolean`；
   `createAgentSession` 的 `enableLsp` 由硬编码 `false` 改为
-  `options.enableLsp ?? this.sessionOptions.enableLsp ?? false`（默认仍关，与现状一致，
-  避免无 LSP 环境的回归）。
+  `options.enableLsp ?? this.sessionOptions.enableLsp ?? true`（默认开，用户决策）。
 - `src/workflow-settings.ts`：`WorkflowSettings` 增加 `enableLsp?: boolean`，
-  `normalizeSettings` 解析（与 `enableIrc` 同模式，`?? false`）。
+  `normalizeSettings` 解析（与 `enableIrc` 同模式，`?? true`）。
 - `src/workflow-manager.ts`：`WorkflowManagerOptions` 增加 `enableLsp` 透传。
-- 用户在 `~/.omp/workflows/settings.json` 设 `enableLsp: true` 后，所有子代理获得 LSP。
+- 所有子代理默认获得 LSP；`~/.omp/workflows/settings.json` 设 `enableLsp: false`
+  可关闭（无语言服务器的环境）。
 - 备注：SDK 在 `enableLsp && !options.hasUI` 时不启动惰性 LSP（`lsp.lazy` 分支），
   子代理 `hasUI: false` 走非惰性路径——需在实现时验证子代理会话 LSP 可用性。
 
@@ -87,7 +87,9 @@
 
 ## 错误处理与边界
 
-- LSP 默认关闭保持现状，开启是用户显式选择 → 无回归风险。
+- LSP 默认开启（用户决策）；无语言服务器环境的用户可显式 `enableLsp: false` 关闭。
+- 子代理会话 `hasUI: false`，SDK 的 `lsp.lazy` 惰性启动分支（`enableLsp && options.hasUI`）
+  不适用——需实测非惰性路径下子代理 LSP 可用性。
 - skill 强约束只影响提示词内容，不改变工具注册 → 无运行期风险。
 - 工作流 prompt 引导是生成器文本改动，`builtin-preview.test.ts` 断言脚本形状
   （若断言 prompt 全文则需同步更新）。

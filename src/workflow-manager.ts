@@ -367,6 +367,11 @@ export interface WorkflowManagerOptions {
   /** 子代理会话启用 IRC（对应 settings.enableIrc，默认 false）。 */
   enableIrc?: boolean;
   /**
+   * 子代理会话启用 LSP（对应 settings.enableLsp，默认 true）。透传给
+   * runWorkflow → WorkflowAgent，见 WorkflowAgentOptions.enableLsp。
+   */
+  enableLsp?: boolean;
+  /**
    * How many terminal (completed/failed/aborted) runs to retain full
    * in-memory state for before the oldest is evicted from `runs` (see the
    * class-level doc comment on that field). Defaults to
@@ -391,6 +396,7 @@ export type WorkflowManagerReloadOptions = Pick<
   | "persistAgentSessions"
   | "syncHostTools"
   | "enableIrc"
+  | "enableLsp"
 >;
 
 /**
@@ -487,6 +493,7 @@ export class WorkflowManager extends EventEmitter {
   private persistAgentSessions: boolean;
   private syncHostTools: boolean;
   private enableIrc: boolean;
+  private enableLsp: boolean;
 
   constructor(options: WorkflowManagerOptions = {}) {
     super();
@@ -505,6 +512,7 @@ export class WorkflowManager extends EventEmitter {
     this.persistAgentSessions = options.persistAgentSessions ?? false;
     this.syncHostTools = options.syncHostTools ?? true;
     this.enableIrc = options.enableIrc ?? false;
+    this.enableLsp = options.enableLsp ?? true;
     this.maxTerminalRunsInMemory = options.maxTerminalRunsInMemory ?? DEFAULT_MAX_TERMINAL_RUNS_IN_MEMORY;
     this.persistence = createRunPersistence(this.cwd);
     this.recoverStaleRuns();
@@ -557,6 +565,7 @@ export class WorkflowManager extends EventEmitter {
     this.persistAgentSessions = options.persistAgentSessions ?? false;
     this.syncHostTools = options.syncHostTools ?? true;
     this.enableIrc = options.enableIrc ?? false;
+    this.enableLsp = options.enableLsp ?? true;
   }
 
   /** Set the session's main model (provider/id). Used to auto-tier explore agents. */
@@ -812,6 +821,7 @@ export class WorkflowManager extends EventEmitter {
         persistAgentSessions: this.persistAgentSessions,
         syncHostTools: this.syncHostTools,
         enableIrc: this.enableIrc,
+        enableLsp: this.enableLsp,
         signal: managed.controller.signal,
         concurrency: resolvedConcurrency,
         agentRetries: resolvedAgentRetries,
@@ -2040,6 +2050,7 @@ export class WorkflowManager extends EventEmitter {
       persistAgentSessions: this.persistAgentSessions,
       syncHostTools: this.syncHostTools,
       enableIrc: this.enableIrc,
+      enableLsp: this.enableLsp,
       excludeTools: this.excludeSubagentTools,
     });
     return this.defaultReviewAgentInstance;
