@@ -156,7 +156,7 @@ flowchart LR
 | `status` | 单个运行的同结构摘要 |
 | `pause` / `resume` / `stop` | `{ result: "paused" \| "resumed" \| "stopped", run }` |
 | `reply { runId, script? }` | 答复 `waiting_consult` 运行：`script` 为修改后的完整脚本（省略=维持原脚本继续；`apply:"confirm"` 时省略=采纳审阅建议） |
-| `intervene { runId }` | 随时介入：暂停运行并把当前脚本与进度投递给主代理，等待 `reply` |
+| `intervene { runId }` | 随时介入：把运行（running/paused/waiting_consult 均可）挂起为 `waiting_consult` 并投递咨询消息给主代理（含 runId 与回复指引），等待 `reply`；对已挂起的运行改投主代理并使在飞自动审阅链失效 |
 
 出错时返回 `allowedActions`：`running` → status/pause/stop · `paused` → status/resume/stop ·
 `waiting_consult` → status/stop/reply/intervene · `failed`/`pending` → status/resume ·
@@ -244,7 +244,7 @@ return { ledger, synthesis };
 | `retry` | `retry(thunk, { attempts?=3, until? }) → unknown` —— `until` 必须同步 |
 | `gate` | `gate(thunk, validator, { attempts?=3 }) → { ok, value, attempts }` —— validator 需返回 `{ ok }` |
 | `checkpoint` | `checkpoint(prompt, { default?, headless?, kind?, choices?, timeoutMs? }) → unknown` |
-| `consult` | `consult(prompt, { to?="agent", agent?, apply?="auto", timeoutMs? }) → { applied, revisedScript?, summary }`（同步函数，await 兼容）—— live 执行抛 `CONSULT_PENDING` 中断脚本并挂起运行，重放命中返回 journaled 结果；同步路径（headless）报工具错误含回复指引 |
+| `consult` | `consult(prompt, { to?="agent", agent?, apply?="auto", timeoutMs? }) → { applied, revisedScript?, summary }`（同步函数，await 兼容）—— live 执行抛 `CONSULT_PENDING` 中断脚本并挂起运行，重放命中返回 journaled 结果；同步路径（headless）报工具错误含回复指引；`agent`/`timeoutMs` 仅声明未接通 |
 | `phase` | `phase(title, { budget? })` —— 声明当前阶段，可带软性子预算 |
 | `log` | `log(message)` —— 新代码用它；`console.*` 仅为兼容保留 |
 | `args`、`cwd`、`process`、`budget` | 调用参数 · 运行 cwd · `{ cwd() }` · `{ total, spent(), remaining() }`（软性记账） |
@@ -256,8 +256,13 @@ return { ledger, synthesis };
 `waiting_consult`，由审阅者（默认运行内子代理，`to: "main"` 则投递主代理）给出修改后的脚本，
 经重放式续跑应用（journal 重放已完成调用，只执行变化部分）。恢复运行时重放命中 journal 结果，
 `consult()` 返回 `{ applied, revisedScript?, summary }`。默认 `apply: "auto"`（子代理建议直接
-应用）；`apply: "confirm"` 先出建议再经主代理确认；自动应用超过 5 次后回落人工答复。审阅失败的
-运行可带脚本 resume 重新咨询。同步执行（headless）下 consult 表现为工具报错，文案含回复指引。
+应用，累计自动应用超过 5 次后回落人工答复）；`apply: "confirm"` 先出建议再经主代理确认，建议
+就绪时投递第二条消息（摘要 + 落盘路径，reply 不附 script 即采纳），建议未就绪时省略 script 的
+reply 回落「维持原脚本继续」。审阅失败（auto 模式）置 failed，可带脚本 resume 重新咨询；confirm
+模式失败保持 `waiting_consult` 等待人工答复。`parallel()` 内的 consult：`CONSULT_PENDING` 是
+不可恢复错误，穿透扇出中止在飞的兄弟智能体，运行照常挂起。同步执行（headless）下 consult 表现
+为工具报错，文案含回复指引；`to:"agent"` 的自动审阅链照常后台执行。`agent` 与 `timeoutMs` 选项
+仅在契约中声明、尚未接通 —— 不要依赖。
 
 运行级共享存储**不是**脚本全局。智能体拿到的是 `store_put` / `store_get` 工具，跨智能体状态经由**智能体**写入
 的 store 流转，脚本侧读不到。
@@ -363,8 +368,9 @@ URL 携带**进程级** token，每次启动都变，且无法从磁盘恢复 �
 旁边配一张**尽力而为**的静态结构图：包含关系画成嵌套（`phase` 拥有其后的调用，`parallel` 块拥有其分支），
 执行顺序画成兄弟节点间的箭头，扇出只能在运行时确定的部分用虚线。点节点会在编辑器里定位到对应调用。
 
-每个区域都是可拖拽调整的窗格，布局按分组持久化在 `localStorage`。保存时会询问项目级还是个人级作用域，
-并立即注册斜杠命令。
+每个区域都是可拖拽调整的窗格，布局按分组持久化在 `localStorage`。保存时会询问项目级还是个人级作用域 ，
+并立即注册斜杠命令。`waiting_consult` 运行可一键介入（intervene 按钮），并在编辑器里回复（「回复并继续」把
+编辑器脚本作为答复提交，经 resolveConsult 带脚本恢复；确认模式建议就绪时编辑器预载审阅建议脚本）。
 
 ### HTTP API
 

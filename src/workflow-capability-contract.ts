@@ -448,6 +448,7 @@ const capabilities: readonly CapabilityDescriptor[] = [
       "settled:false 结果重放视为 miss，重新挂起",
       "消耗 1 个 agent 槽位且不消耗 token（同 checkpoint）",
       "to: agent 默认 apply: auto（审阅链直接应用）；to: main 或 apply: confirm 走主代理",
+      "agent 与 timeoutMs 仅声明未接通：审阅链恒用默认审阅代理、无超时传递——不要依赖",
     ],
     evidence: ["tests/consult-vm.test.ts", "tests/consult-review-chain.test.ts"],
   }),

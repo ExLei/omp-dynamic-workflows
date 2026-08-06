@@ -18,17 +18,20 @@
 | 选项 | 默认 | 含义 |
 |---|---|---|
 | `to` | `"agent"` | 咨询对象：`"agent"` 派运行内审阅子代理；`"main"` 投递主代理（发起编排的会话） |
-| `agent` | — | 审阅子代理的 agentType 名；省略派生默认审阅代理 |
+| `agent` | — | 审阅子代理的 agentType 名（**仅声明未接通**：审阅链恒用默认审阅代理，勿依赖） |
 | `apply` | `"auto"` | `"auto"` 子代理建议直接应用；`"confirm"` 先出建议再经主代理确认 |
-| `timeoutMs` | agentTimeoutMs | 审阅子代理超时 |
+| `timeoutMs` | agentTimeoutMs | 审阅子代理超时（**仅声明未接通**：审阅链无超时传递，勿依赖） |
 
 - 审阅子代理把修改后的完整脚本写入临时文件（规避输出长度限制），校验通过后**重放式续跑**：
   journal 重放已完成调用，只执行变化部分。
 - `apply:"confirm"` 或 `to:"main"` 时，投递消息含 runId 与回复指引；主代理用
   `workflow_control` 的 `reply` 动作回复（带修改后脚本，或省略维持原脚本/采纳建议）。
+  confirm 建议就绪时另投第二条消息（摘要 + 建议脚本落盘路径），省略 script 的 reply 即采纳建议；
+  建议未就绪（链未完成或失败）时省略 script 的 reply 回落「维持原脚本继续」。
 - 自动应用上限 5 次：超限回落 `waiting_consult` 等人工答复。
-- 审阅失败的运行置 failed；带脚本 resume 后咨询重新挂起可再次答复（失败结果重放视为
-  未决，不会静默越过咨询点）。
+- 审阅失败按模式分流：`apply:"auto"` 的运行置 failed（可带脚本 resume 后咨询重新挂起再次答复）；
+  `apply:"confirm"` 的运行保持 `waiting_consult` 等待人工答复（建议生成失败不终止运行）。
+- 失败结果重放视为未决（settled:false 按 miss 处理），不会静默越过咨询点。
 - 同步执行（headless）下 consult 表现为工具报错，文案含回复指引；`to:"agent"` 的自动
   审阅链照常后台执行，结果以 follow-up 投递。
 - `parallel()` 内的 consult：`CONSULT_PENDING` 是不可恢复错误，不会被吞成 `null`——它
