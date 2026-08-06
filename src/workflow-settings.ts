@@ -51,8 +51,6 @@ export interface WorkflowSettings {
   excludeSubagentTools?: string[];
   /** 子代理会话全量同步主代理扩展工具/技能（默认 true）。 */
   syncHostTools?: boolean;
-  /** MCP 白名单：只在这些服务器的工具进子代理；空数组 = 不启用 MCP。 */
-  mcpServers?: string[];
   /** 子代理会话启用 IRC 通信（默认 false）。 */
   enableIrc?: boolean;
   /**
@@ -183,7 +181,10 @@ export function saveWorkflowSettings(
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
   const existing = readObject(path);
-  writeFileSync(path, `${JSON.stringify({ ...existing, ...normalizeSettings(settings) }, null, 2)}\n`, "utf-8");
+  // mcpServers 白名单已于 2026-08-06 移除：保存时剔除历史残留键（clean cutover，
+  // 不留永久死键）；其余未知键保留行为不变。
+  const { mcpServers: _legacy, ...cleanExisting } = existing;
+  writeFileSync(path, `${JSON.stringify({ ...cleanExisting, ...normalizeSettings(settings) }, null, 2)}\n`, "utf-8");
 }
 
 /** Save a global preference and update an existing project override if one is present. */
@@ -257,18 +258,12 @@ export function normalizeSettings(value: unknown): WorkflowSettings {
     const names = raw.excludeSubagentTools.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
     if (names.length) settings.excludeSubagentTools = names;
   }
-  // 三字段遵循文件既有「缺省即省略」不变量：仅在显式出现且类型合法时输出键，
+  // 两字段遵循文件既有「缺省即省略」不变量：仅在显式出现且类型合法时输出键，
   // 未设置/非法值不物化缺省——否则 { ...global, ...project } merge 会用项目文件
   // 的缺省键静默覆盖全局显式设置，saveWorkflowSettings 也会写入用户从未设置的键。
-  // 缺省语义由消费端 ?? 兜底（syncHostTools ?? true / mcpServers ?? [] / enableIrc ?? false）。
+  // 缺省语义由消费端 ?? 兜底（syncHostTools ?? true / enableIrc ?? false）。
   if (typeof raw.syncHostTools === "boolean") {
     settings.syncHostTools = raw.syncHostTools;
-  }
-  if (Array.isArray(raw.mcpServers)) {
-    const names = raw.mcpServers
-      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      .map((s) => s.trim());
-    if (names.length) settings.mcpServers = names;
   }
   if (typeof raw.enableIrc === "boolean") {
     settings.enableIrc = raw.enableIrc;

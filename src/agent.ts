@@ -3,7 +3,6 @@ import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AssistantMessage, Model, TextContent } from "@oh-my-pi/pi-ai";
-import type { MountedMCPToolRouteSource } from "@oh-my-pi/pi-coding-agent/session/session-tools";
 import {
   type CreateAgentSessionOptions,
   type ModelRegistry,
@@ -281,11 +280,9 @@ export interface WorkflowAgentOptions {
    * 子代理会话全量同步主代理扩展工具/技能（对应 settings.syncHostTools，默认 true）。
    * 开启时子代理走 omp 官方父→子通道（技能快照 + 扩展发现），在子代理会话内
    * 重新绑定本会话的扩展/技能；关闭时保持移植版原有隔离（禁用扩展发现、无 MCP、
-   * 无 IRC）。MCP 工具白名单过滤在任务 5（createAgentSession 后 applyActiveToolsByName）。
+   * 无 IRC）。MCP 默认全量（移除白名单后恒开）。
    */
   syncHostTools?: boolean;
-  /** MCP 白名单服务器名；undefined/[] = 不启用 MCP（enableMCP: length > 0）。 */
-  mcpServers?: string[];
   /** 子代理会话启用 IRC（对应 settings.enableIrc，默认 false）。 */
   enableIrc?: boolean;
 }
@@ -617,8 +614,6 @@ export class WorkflowAgent {
    * 子代理自己 loadExtensions 绑定本会话；关闭时保持移植版原有隔离。
    */
   private readonly syncHostTools: boolean;
-  /** MCP 白名单服务器名；空/缺省 = 不启用 MCP（enableMCP: length > 0）。 */
-  private readonly mcpServers: string[];
   /** 子代理会话启用 IRC（settings.enableIrc，默认 false）。 */
   private readonly enableIrc: boolean;
   /** Lazily built once; shares the SDK's agentDir/auth so resolved models are authed. */
@@ -651,7 +646,6 @@ export class WorkflowAgent {
     this.mainModel = options.mainModel;
     this.sharedRegistry = options.modelRegistry;
     this.syncHostTools = options.syncHostTools ?? true;
-    this.mcpServers = options.mcpServers ?? [];
     this.enableIrc = options.enableIrc ?? false;
   }
 
@@ -928,7 +922,7 @@ export class WorkflowAgent {
       modelRegistry,
       customTools: allCustomTools,
       // syncHostTools：走 omp 官方父→子通道——子代理自己 loadExtensions 绑定本会话
-      // （技能快照 + 扩展发现），MCP 按白名单开关，IRC 按设置。关闭时保持移植版
+      // （技能快照 + 扩展发现），MCP 默认全量，IRC 按设置。关闭时保持移植版
       // 原有隔离（禁用扩展发现、无技能/扩展/MCP/IRC 进入子代理会话）。
       //
       // restrictToolNames 必须为 false：true 会让 SDK 清空 extensionPaths（sdk.ts
@@ -942,7 +936,7 @@ export class WorkflowAgent {
             extensions: [] as never[],
             additionalExtensionPaths: [],
             preloadedExtensionPaths: await this.resolveSubagentExtensionPaths(settings, agentDir),
-            enableMCP: this.mcpServers.length > 0,
+            enableMCP: true,
             enableIrc: this.enableIrc,
             // 保持子代理无 LSP，行为不漂移（移植版原本就未启用 LSP）。
             enableLsp: false,
@@ -971,58 +965,22 @@ export class WorkflowAgent {
       }
     }
 
-    // Denylist convergence + MCP whitelist: with restrictToolNames: false the
-    // SDK no longer filters workflow/workflow_control/excludeTools out of the
-    // session's tool set. Restore the previous semantics here, before the first
-    // prompt, by dropping the denied names from the active set — and, in the
-    // SAME keep computation, drop every MCP tool whose server is not declared
-    // in settings.mcpServers. Also drop the SDK's hidden `goal` tool —
-    // registered whenever restrictToolNames is false, yet its own assembly
-    // filters it out of the requested names and it only activates in goal
-    // mode; resurrecting it via getAllToolNames() would advertise an invoke
-    // that always throws "Goal mode is not active". Best-effort — a failure
-    // must never abort the run; when MCP ownership cannot be determined the
-    // conservative default is to give no MCP tools at all.
+    // Denylist convergence: with restrictToolNames: false the SDK no longer
+    // filters workflow/workflow_control/excludeTools out of the session's tool
+    // set. Restore the previous semantics here, before the first prompt, by
+    // dropping the denied names from the active set — and also the SDK's
+    // hidden `goal` tool (registered whenever restrictToolNames is false, yet
+    // its own assembly filters it out of the requested names and it only
+    // activates in goal mode; resurrecting it via getAllToolNames() would
+    // advertise an invoke that always throws "Goal mode is not active").
+    // MCP tools pass through untouched — since 2026-08-06 subagents default to
+    // the full host MCP surface (no whitelist). Best-effort — a failure must
+    // never abort the run.
     if (this.syncHostTools) {
       try {
         const toolNames = session.getAllToolNames();
         const denied = new Set(subagentExcludedTools(this.excludeTools));
-        const mcpServers = new Set(this.mcpServers);
-        // Enumerate MCP ownership through the session's public tool surface
-        // (AgentSession exposes no registry — SessionTools is a private field):
-        // getToolByName returns the registered tool objects, and MCP entries
-        // carry the SDK's route metadata as strings (mcpServerName/mcpToolName
-        // — the exact predicate collectMountedMCPToolRoutes applies, preserved
-        // through the MCPTool → adapter → extension-wrapper chain). The server
-        // name is the RAW config name; the `mcp__<sanitized_server>_<tool>`
-        // tool-name prefix holds a sanitized copy and must not be matched
-        // against config names.
-        let mcpServerByTool: ReadonlyMap<string, string> | null = null;
-        try {
-          const owned = new Map<string, string>();
-          for (const name of toolNames) {
-            const tool = session.getToolByName(name);
-            if (!tool) continue;
-            const route = tool as MountedMCPToolRouteSource;
-            if (typeof route.mcpServerName === "string" && typeof route.mcpToolName === "string") {
-              owned.set(name, route.mcpServerName);
-            }
-          }
-          mcpServerByTool = owned;
-        } catch (enumError) {
-          // 白名单不可判定 → 不给任何 MCP 工具（保守默认），denylist 收敛照常。
-          console.warn(
-            `[workflow] mcp whitelist enumeration failed: ${enumError instanceof Error ? enumError.message : String(enumError)}`,
-          );
-        }
-        const keep = toolNames.filter((name) => {
-          if (denied.has(name) || name === "goal") return false;
-          const server = mcpServerByTool?.get(name);
-          if (server !== undefined) return mcpServers.has(server);
-          // 枚举失败时按 SDK 自身的 MCP 命名约定（isMCPToolName）剥掉全部 MCP 工具。
-          if (mcpServerByTool === null && name.startsWith("mcp__")) return false;
-          return true;
-        });
+        const keep = toolNames.filter((name) => !denied.has(name) && name !== "goal");
         await session.setActiveToolsByName(keep);
       } catch (error) {
         console.warn(

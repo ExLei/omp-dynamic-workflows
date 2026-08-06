@@ -364,8 +364,6 @@ export interface WorkflowManagerOptions {
    * 透传给 runWorkflow → WorkflowAgent，见 WorkflowAgentOptions.syncHostTools。
    */
   syncHostTools?: boolean;
-  /** MCP 白名单服务器名；undefined/[] = 不启用 MCP（enableMCP: length > 0）。 */
-  mcpServers?: string[];
   /** 子代理会话启用 IRC（对应 settings.enableIrc，默认 false）。 */
   enableIrc?: boolean;
   /**
@@ -392,7 +390,6 @@ export type WorkflowManagerReloadOptions = Pick<
   | "excludeSubagentTools"
   | "persistAgentSessions"
   | "syncHostTools"
-  | "mcpServers"
   | "enableIrc"
 >;
 
@@ -489,7 +486,6 @@ export class WorkflowManager extends EventEmitter {
   private excludeSubagentTools?: string[];
   private persistAgentSessions: boolean;
   private syncHostTools: boolean;
-  private mcpServers: string[];
   private enableIrc: boolean;
 
   constructor(options: WorkflowManagerOptions = {}) {
@@ -508,7 +504,6 @@ export class WorkflowManager extends EventEmitter {
     this.excludeSubagentTools = options.excludeSubagentTools;
     this.persistAgentSessions = options.persistAgentSessions ?? false;
     this.syncHostTools = options.syncHostTools ?? true;
-    this.mcpServers = options.mcpServers ?? [];
     this.enableIrc = options.enableIrc ?? false;
     this.maxTerminalRunsInMemory = options.maxTerminalRunsInMemory ?? DEFAULT_MAX_TERMINAL_RUNS_IN_MEMORY;
     this.persistence = createRunPersistence(this.cwd);
@@ -561,7 +556,6 @@ export class WorkflowManager extends EventEmitter {
     this.excludeSubagentTools = options.excludeSubagentTools;
     this.persistAgentSessions = options.persistAgentSessions ?? false;
     this.syncHostTools = options.syncHostTools ?? true;
-    this.mcpServers = options.mcpServers ?? [];
     this.enableIrc = options.enableIrc ?? false;
   }
 
@@ -817,7 +811,6 @@ export class WorkflowManager extends EventEmitter {
         modelRegistry: this.modelRegistry,
         persistAgentSessions: this.persistAgentSessions,
         syncHostTools: this.syncHostTools,
-        mcpServers: this.mcpServers,
         enableIrc: this.enableIrc,
         signal: managed.controller.signal,
         concurrency: resolvedConcurrency,
@@ -1997,7 +1990,7 @@ export class WorkflowManager extends EventEmitter {
   /**
    * 派生审阅子代理并执行一次审阅（裁定 2 的 runReviewAgent）。复用注入的 runner
    * （this.agent，测试注入 mock）；缺省构建与 executeRun 同款配置的 WorkflowAgent
-   * （mainModel/modelRegistry/persistAgentSessions/syncHostTools/mcpServers/enableIrc/
+   * （mainModel/modelRegistry/persistAgentSessions/syncHostTools/enableIrc/
    * excludeTools；工具面 = 默认编码工具集——write 已在其中，workflow/workflow_control
    * 经 DEFAULT_EXCLUDED_SUBAGENT_TOOLS 排除）。输出约定：把修改后完整脚本写入 prompt
    * 指定的 tmpPath，返回 JSON {ok:true,summary} | {ok:false,reason}（宽松解析：非 JSON
@@ -2046,7 +2039,6 @@ export class WorkflowManager extends EventEmitter {
       modelRegistry: this.modelRegistry,
       persistAgentSessions: this.persistAgentSessions,
       syncHostTools: this.syncHostTools,
-      mcpServers: this.mcpServers,
       enableIrc: this.enableIrc,
       excludeTools: this.excludeSubagentTools,
     });

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { extractValidated } from "../src/agent.js";
-import { normalizeSettings } from "../src/workflow-settings.js";
+import { normalizeSettings, saveWorkflowSettings } from "../src/workflow-settings.js";
 import { Check, Convert, type TSchema, Type } from "../src/omp-typebox.js";
 
 describe("Convert", () => {
@@ -78,28 +81,25 @@ describe("extractValidated", () => {
 });
 
 describe("normalizeSettings", () => {
-  test("coerces syncHostTools / mcpServers / enableIrc, trimming whitespace-only entries", () => {
-    // " " 能通过旧版 s.length > 0 过滤，纯空白串必须被 trim 过滤且存值前 trim。
+  test("coerces syncHostTools / enableIrc; legacy mcpServers is ignored", () => {
+    // mcpServers 白名单已于 2026-08-06 移除：normalize 不再产出该键。
     expect(normalizeSettings({ syncHostTools: false, mcpServers: ["a", 3, " "], enableIrc: true })).toEqual({
       syncHostTools: false,
-      mcpServers: ["a"],
       enableIrc: true,
     });
   });
 
-  test("keeps syncHostTools / mcpServers / enableIrc sparse when omitted", () => {
+  test("keeps syncHostTools / enableIrc sparse when omitted", () => {
     // 缺省即省略：不物化缺省键，否则项目覆盖文件会经 { ...global, ...project }
-    // merge 静默覆盖全局显式设置。缺省语义由消费端（任务 4）?? 兜底。
+    // merge 静默覆盖全局显式设置。缺省语义由消费端 ?? 兜底。
     const normalized = normalizeSettings({});
     expect(normalized.syncHostTools).toBeUndefined();
-    expect(normalized.mcpServers).toBeUndefined();
     expect(normalized.enableIrc).toBeUndefined();
   });
 
   test("does not materialize defaults for type-invalid values", () => {
     const normalized = normalizeSettings({ syncHostTools: 1, mcpServers: "x", enableIrc: "yes" });
     expect(normalized.syncHostTools).toBeUndefined();
-    expect(normalized.mcpServers).toBeUndefined();
     expect(normalized.enableIrc).toBeUndefined();
   });
 
@@ -112,5 +112,21 @@ describe("normalizeSettings", () => {
     expect(normalizeSettings({ syncMode: "sometimes" })).toEqual({});
     expect(normalizeSettings({ syncMode: 1 })).toEqual({});
     expect(normalizeSettings({}).syncMode).toBeUndefined();
+  });
+});
+
+describe("saveWorkflowSettings legacy cleanup", () => {
+  test("drops the removed mcpServers key when saving over an existing file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-settings-strip-"));
+    try {
+      const path = join(dir, "settings.json");
+      writeFileSync(path, JSON.stringify({ mcpServers: ["old"], enableIrc: true }));
+      saveWorkflowSettings({ enableIrc: false }, { settingsPath: path });
+      const saved = JSON.parse(readFileSync(path, "utf-8"));
+      expect(saved.mcpServers).toBeUndefined();
+      expect(saved.enableIrc).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
