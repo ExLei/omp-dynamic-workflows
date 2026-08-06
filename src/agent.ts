@@ -622,7 +622,7 @@ export class WorkflowAgent {
   private readonly syncHostTools: boolean;
   /** 子代理会话启用 IRC（settings.enableIrc，默认 false）。 */
   private readonly enableIrc: boolean;
-  /** 子代理会话启用 LSP（settings.enableLsp，默认 false）。 */
+  /** 子代理会话启用 LSP（settings.enableLsp，默认 true）。 */
   private readonly enableLsp: boolean;
   /** Lazily built once; shares the SDK's agentDir/auth so resolved models are authed. */
   private registry?: ModelRegistry;
