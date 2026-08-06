@@ -130,9 +130,10 @@ const diffBlock = '\\n\\n<diff source=\\"' + diffSource + '\\"' + (diffTruncated
 // read/grep 验证实现细节。机械/结构性改写用 ast_edit（本工作流以审查为主，
 // 不涉及改写，但 finder 评估影响面时 ast_edit 无必要——列出前两者即可）。
 const base = 'Pull in any additional file context you need — in order of preference: ' +
-  'codegraph_explore "<query about the symbols the diff touches: callers, callees, blast radius>" ' +
-  '(or bash: codegraph explore "<query>") to map cross-file impact; ' +
-  'then read/grep the exact files to verify implementation details. ' +
+  'call the codegraph_explore TOOL with a plain-text query (no quotes/shell syntax) about the symbols ' +
+  'the diff touches (callers, callees, blast radius); only if that tool is unavailable, run ' +
+  '"bash: codegraph explore <query>" as one clean command (no pipes/grep, the CLI misparses them). ' +
+  'Then read/grep the exact files to verify implementation details. ' +
   'If you need to locate a symbol precisely across files, use lsp (hover/references) when available.' +
   diffBlock
 

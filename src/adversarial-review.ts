@@ -39,7 +39,8 @@ phase('Investigate')
 const investigation = await agent(
   'Investigate the following and list concrete, individually-checkable findings:\\n' + task +
   '\\n\\nIf the task concerns code in this repository, map the relevant symbols and their impact first: ' +
-  'codegraph_explore "<query>" (or bash: codegraph explore "<query>"), then read/grep to verify; ' +
+  'call the codegraph_explore TOOL with a plain-text query (only if unavailable, run ' +
+  '"bash: codegraph explore <query>" as one clean command, no pipes/grep), then read/grep to verify; ' +
   'use lsp (hover/references) to locate symbols precisely when available.',
   { label: 'investigate', schema: { type: 'object', properties: { findings: { type: 'array', items: { type: 'string' } } }, required: ['findings'] } }
 )
@@ -96,7 +97,8 @@ export function generateMultiPerspectiveWorkflow(topic: string, perspectives: st
         `Analyze from ${p} perspective: ` +
         topic +
         `\n\nIf this topic concerns code in this repository, map the relevant symbols first: ` +
-        `codegraph_explore "<query>" (or bash: codegraph explore "<query>"), then read/grep to verify; ` +
+        `call the codegraph_explore TOOL with a plain-text query (only if unavailable, run ` +
+        `"bash: codegraph explore <query>" as one clean command, no pipes/grep), then read/grep to verify; ` +
         `use lsp (hover/references) for precise symbol location when available.`;
       return `  () => agent(${JSON.stringify(prompt)}, { label: ${JSON.stringify(label)} }),`;
     })

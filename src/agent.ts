@@ -617,9 +617,12 @@ export function workflowAgentIdentity(label?: string): string {
  * same tool ordering even when their own prompt says nothing about it.
  */
 export const DEFAULT_CODEGRAPH_GUIDANCE =
-  "When the task involves code in this repository, map the relevant symbols and their impact FIRST: " +
-  'codegraph_explore "<query>" (or bash: codegraph explore "<query>") — it returns verbatim source, ' +
-  "call paths, callers/importers/tests (blast radius). Then read/grep to verify implementation details. " +
+  "When the task involves code in this repository, map the relevant symbols and their impact FIRST " +
+  "by calling the codegraph_explore TOOL with a plain-text query (no quotes, no shell syntax) — " +
+  "it returns verbatim source, call paths, callers/importers/tests (blast radius). " +
+  "Only if the codegraph_explore tool is unavailable, fall back to `bash: codegraph explore \"<query>\"` " +
+  "as a single clean command (avoid pipes/grep — the CLI misparses them). " +
+  "Then read/grep to verify implementation details. " +
   "Use lsp (hover/references) for precise symbol location, and ast_edit for mechanical/structural rewrites.";
 
 export class WorkflowAgent {
