@@ -34,6 +34,9 @@ const recordedSessions: Array<Record<string, unknown>> = [];
 /** Tool sets passed to the fake session's setActiveToolsByName (denylist convergence). */
 const appliedToolSets: string[][] = [];
 
+/** Prompts passed to the fake session's prompt() (guidance injection assertions). */
+const recordedPrompts: string[] = [];
+
 /** Skills the fake host reports via getActiveSkills(). */
 const activeSkills = [
   { name: "writing-plans", description: "Plan multi-step work first", filePath: "/skills/writing-plans/SKILL.md" },
@@ -87,7 +90,8 @@ function makeFakeSession(): Record<string, unknown> {
     async setActiveToolsByName(names: string[]) {
       appliedToolSets.push([...names]);
     },
-    async prompt() {
+    async prompt(firstArg?: unknown) {
+      recordedPrompts.push(typeof firstArg === "string" ? firstArg : String(firstArg ?? ""));
       messages.push({
         role: "assistant",
         content: [{ type: "text", text: "done" }],
@@ -151,6 +155,7 @@ const META = (name: string) =>
 describe("subagent session syncHostTools", () => {
   beforeEach(() => {
     appliedToolSets.length = 0;
+    recordedPrompts.length = 0;
     fakeRegistry = defaultFakeRegistry();
   });
 
@@ -257,5 +262,27 @@ describe("subagent session syncHostTools", () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  test("default codegraph guidance is prepended to every subagent prompt", async () => {
+    const agent = new WorkflowAgent();
+    await agent.run("do the work");
+
+    expect(recordedPrompts.length).toBeGreaterThan(0);
+    const prompt = recordedPrompts[recordedPrompts.length - 1];
+    expect(prompt).toContain("codegraph_explore");
+    expect(prompt).toContain("bash: codegraph explore");
+    // Guidance comes before the caller's prompt text.
+    expect(prompt.indexOf("codegraph_explore")).toBeLessThan(prompt.indexOf("do the work"));
+  });
+
+  test("codegraphGuidance: false suppresses the prepended guidance", async () => {
+    const agent = new WorkflowAgent({ codegraphGuidance: false });
+    await agent.run("do the work");
+
+    expect(recordedPrompts.length).toBeGreaterThan(0);
+    const prompt = recordedPrompts[recordedPrompts.length - 1];
+    expect(prompt).not.toContain("codegraph_explore");
+    expect(prompt).toContain("do the work");
   });
 });

@@ -60,6 +60,12 @@ export interface WorkflowSettings {
    */
   enableLsp?: boolean;
   /**
+   * 每个子代理任务前置 codegraph 引导（默认 true）：涉及代码时先
+   * codegraph_explore（CLI 回退 bash: codegraph explore）建立影响面，
+   * 再 read/grep 验证，lsp 精确定位，ast_edit 机械改写。显式 false 关闭。
+   */
+  codegraphGuidance?: boolean;
+  /**
    * 同步/后台执行兜底开关（规格决策记录第 2 节预留项，V1 实测触发）：
    * "always" 强制同步执行（进度帧流式显示，ACP 会话可实时看到进展）、
    * "never" 强制后台（立即返回、结果后投递）、缺省 "auto" 维持现状判定
@@ -276,6 +282,9 @@ export function normalizeSettings(value: unknown): WorkflowSettings {
   }
   if (typeof raw.enableLsp === "boolean") {
     settings.enableLsp = raw.enableLsp;
+  }
+  if (typeof raw.codegraphGuidance === "boolean") {
+    settings.codegraphGuidance = raw.codegraphGuidance;
   }
   // syncMode 同走「缺省即省略」不变量：仅显式合法值输出键，非法值/未设置不物化
   // 缺省（auto）——否则 merge 与 save 会写入用户从未设置的键。auto 语义由消费端

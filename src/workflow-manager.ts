@@ -372,6 +372,12 @@ export interface WorkflowManagerOptions {
    */
   enableLsp?: boolean;
   /**
+   * 每个子代理任务前置 codegraph 引导（对应 settings.codegraphGuidance，
+   * 默认 true）。透传给 runWorkflow → WorkflowAgent，见
+   * WorkflowAgentOptions.codegraphGuidance。
+   */
+  codegraphGuidance?: boolean;
+  /**
    * How many terminal (completed/failed/aborted) runs to retain full
    * in-memory state for before the oldest is evicted from `runs` (see the
    * class-level doc comment on that field). Defaults to
@@ -397,6 +403,7 @@ export type WorkflowManagerReloadOptions = Pick<
   | "syncHostTools"
   | "enableIrc"
   | "enableLsp"
+  | "codegraphGuidance"
 >;
 
 /**
@@ -494,6 +501,7 @@ export class WorkflowManager extends EventEmitter {
   private syncHostTools: boolean;
   private enableIrc: boolean;
   private enableLsp: boolean;
+  private codegraphGuidance: boolean;
 
   constructor(options: WorkflowManagerOptions = {}) {
     super();
@@ -513,6 +521,7 @@ export class WorkflowManager extends EventEmitter {
     this.syncHostTools = options.syncHostTools ?? true;
     this.enableIrc = options.enableIrc ?? false;
     this.enableLsp = options.enableLsp ?? true;
+    this.codegraphGuidance = options.codegraphGuidance ?? true;
     this.maxTerminalRunsInMemory = options.maxTerminalRunsInMemory ?? DEFAULT_MAX_TERMINAL_RUNS_IN_MEMORY;
     this.persistence = createRunPersistence(this.cwd);
     this.recoverStaleRuns();
@@ -566,6 +575,7 @@ export class WorkflowManager extends EventEmitter {
     this.syncHostTools = options.syncHostTools ?? true;
     this.enableIrc = options.enableIrc ?? false;
     this.enableLsp = options.enableLsp ?? true;
+    this.codegraphGuidance = options.codegraphGuidance ?? true;
   }
 
   /** Set the session's main model (provider/id). Used to auto-tier explore agents. */
@@ -822,6 +832,7 @@ export class WorkflowManager extends EventEmitter {
         syncHostTools: this.syncHostTools,
         enableIrc: this.enableIrc,
         enableLsp: this.enableLsp,
+        codegraphGuidance: this.codegraphGuidance,
         signal: managed.controller.signal,
         concurrency: resolvedConcurrency,
         agentRetries: resolvedAgentRetries,
@@ -2051,6 +2062,7 @@ export class WorkflowManager extends EventEmitter {
       syncHostTools: this.syncHostTools,
       enableIrc: this.enableIrc,
       enableLsp: this.enableLsp,
+      codegraphGuidance: this.codegraphGuidance,
       excludeTools: this.excludeSubagentTools,
     });
     return this.defaultReviewAgentInstance;

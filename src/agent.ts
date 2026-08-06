@@ -255,6 +255,13 @@ export interface WorkflowAgentOptions {
   /** Extra system guidance prepended to every subagent task. */
   instructions?: string;
   /**
+   * Prepends default code-intelligence guidance to every subagent task:
+   * explore impact via codegraph_explore (CLI fallback: bash: codegraph
+   * explore) before read/grep, use lsp for precise symbol location, ast_edit
+   * for mechanical rewrites. Default true; set false to suppress.
+   */
+  codegraphGuidance?: boolean;
+  /**
    * The session's main model (`provider/modelId`). Used as a fallback when
    * resolving opts.tier and no model-tiers.json config exists. Without this,
    * a workflow using `{ tier: "small" }` would log a warning and fall through
@@ -603,6 +610,18 @@ export function workflowAgentIdentity(label?: string): string {
   return `wf-${slug}-${(++agentIdentitySeq).toString(36)}`;
 }
 
+/**
+ * Default code-intelligence guidance prepended to every subagent task unless
+ * the caller opts out via `codegraphGuidance: false`. Mirrors the method
+ * section the built-in workflow generators embed, so custom scripts get the
+ * same tool ordering even when their own prompt says nothing about it.
+ */
+export const DEFAULT_CODEGRAPH_GUIDANCE =
+  "When the task involves code in this repository, map the relevant symbols and their impact FIRST: " +
+  'codegraph_explore "<query>" (or bash: codegraph explore "<query>") — it returns verbatim source, ' +
+  "call paths, callers/importers/tests (blast radius). Then read/grep to verify implementation details. " +
+  "Use lsp (hover/references) for precise symbol location, and ast_edit for mechanical/structural rewrites.";
+
 export class WorkflowAgent {
   private readonly cwd: string;
   private readonly baseTools: ToolDefinition[];
@@ -611,6 +630,8 @@ export class WorkflowAgent {
   private readonly sessionOptions: Partial<CreateAgentSessionOptions>;
   private readonly persistAgentSessions: boolean;
   private readonly instructions?: string;
+  /** Whether DEFAULT_CODEGRAPH_GUIDANCE is prepended (default true). */
+  private readonly codegraphGuidance: boolean;
   private readonly mainModel?: string;
   /** Shared registry from the host session, when provided. */
   private readonly sharedRegistry?: ModelRegistry;
@@ -651,6 +672,7 @@ export class WorkflowAgent {
     this.sessionOptions = options.session ?? {};
     this.persistAgentSessions = options.persistAgentSessions ?? false;
     this.instructions = options.instructions;
+    this.codegraphGuidance = options.codegraphGuidance ?? true;
     this.mainModel = options.mainModel;
     this.sharedRegistry = options.modelRegistry;
     this.syncHostTools = options.syncHostTools ?? true;
@@ -1097,6 +1119,7 @@ export class WorkflowAgent {
 
   private buildPrompt(prompt: string, options: AgentRunOptions<any>, structured: boolean): string {
     const parts = [
+      this.codegraphGuidance ? DEFAULT_CODEGRAPH_GUIDANCE : undefined,
       this.instructions,
       options.instructions,
       options.label ? `Task label: ${options.label}` : undefined,
