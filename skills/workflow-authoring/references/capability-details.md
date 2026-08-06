@@ -160,6 +160,22 @@
 - 约束：消耗一个智能体槽位且不消耗 token
 - 约束：记录的答案只在未变化的恢复前缀内重放
 
+<a id="consult"></a>
+## consult
+
+- 分类：`runtime-global`
+- 支持：`supported`
+- 签名：`consult(prompt, options?) => Promise<ConsultOutcome>`
+- 选项结构：`consult-options`
+- `to`："agent" | "main"（可选；默认："agent"）
+- `agent`：string（可选）
+- `apply`："auto" | "confirm"（可选；默认："auto"）
+- `timeoutMs`：number（可选）
+- 约束：live 执行抛 CONSULT_PENDING 中断脚本；重放命中返回 journaled 结果
+- 约束：settled:false 结果重放视为 miss，重新挂起
+- 约束：消耗 1 个 agent 槽位且不消耗 token（同 checkpoint）
+- 约束：to: agent 默认 apply: auto（审阅链直接应用）；to: main 或 apply: confirm 走主代理
+
 <a id="log"></a>
 ## log
 

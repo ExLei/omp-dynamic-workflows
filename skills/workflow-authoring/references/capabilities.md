@@ -22,6 +22,7 @@
 | retry | runtime-global | `retry(thunk: (attempt: number) => unknown \| Promise<unknown>, options?: { attempts?: number; until?: (result: unknown) => boolean }) => Promise<unknown>` | `attempts`：number（可选；默认：3）<br>`until`：(result: unknown) => boolean（可选；默认：省略时接受第一个结果） |
 | gate | runtime-global | `gate(thunk: (feedback: string \| undefined, attempt: number) => unknown \| Promise<unknown>, validator: (value: unknown) => { ok: boolean; feedback?: string } \| Promise<{ ok: boolean; feedback?: string }>, options?: { attempts?: number }) => Promise<{ ok: boolean; value: unknown; attempts: number }>` | `attempts`：number（可选；默认：3） |
 | checkpoint | runtime-global | `checkpoint(prompt, options?) => Promise<unknown>` | `default`：unknown（可选；默认：无 UI 且省略时为 true）<br>`headless`："default" \| "abort"（可选；默认："default"）<br>`kind`："confirm" \| "input" \| "select"（可选；默认："confirm"）<br>`choices`：string[]（可选）<br>`timeoutMs`：number（可选） |
+| consult | runtime-global | `consult(prompt, options?) => Promise<ConsultOutcome>` | `to`："agent" \| "main"（可选；默认："agent"）<br>`agent`：string（可选）<br>`apply`："auto" \| "confirm"（可选；默认："auto"）<br>`timeoutMs`：number（可选） |
 | log | runtime-global | `log(message) => void` | — |
 | phase | runtime-global | `phase(title, options?) => void` | `budget`：number（可选） |
 | args | runtime-global | `args: unknown` | — |

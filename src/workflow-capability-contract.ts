@@ -38,6 +38,7 @@ export interface OptionShape {
   id:
     | "agent-options"
     | "checkpoint-options"
+    | "consult-options"
     | "phase-options"
     | "verify-options"
     | "judge-panel-options"
@@ -122,6 +123,7 @@ export interface WorkflowRuntimeImplementations {
   retry: unknown;
   gate: unknown;
   checkpoint: unknown;
+  consult: unknown;
   log: unknown;
   phase: unknown;
   args: unknown;
@@ -192,6 +194,15 @@ const CHECKPOINT_OPTIONS: OptionShape = {
     option("headless", '"default" | "abort"', true, '"default"'),
     option("kind", '"confirm" | "input" | "select"', true, '"confirm"'),
     option("choices", "string[]", true),
+    option("timeoutMs", "number", true),
+  ],
+};
+const CONSULT_OPTIONS: OptionShape = {
+  id: "consult-options",
+  options: [
+    option("to", '"agent" | "main"', true, '"agent"'),
+    option("agent", "string", true),
+    option("apply", '"auto" | "confirm"', true, '"auto"'),
     option("timeoutMs", "number", true),
   ],
 };
@@ -428,6 +439,18 @@ const capabilities: readonly CapabilityDescriptor[] = [
     ],
     evidence: ["tests/checkpoint.test.ts"],
   }),
+  runtimeGlobal("consult", {
+    signature: "consult(prompt, options?) => Promise<ConsultOutcome>",
+    discovery: DiscoveryPlacement.WORKFLOW_AUTHORING_SKILL,
+    optionShape: "consult-options",
+    constraints: [
+      "live 执行抛 CONSULT_PENDING 中断脚本；重放命中返回 journaled 结果",
+      "settled:false 结果重放视为 miss，重新挂起",
+      "消耗 1 个 agent 槽位且不消耗 token（同 checkpoint）",
+      "to: agent 默认 apply: auto（审阅链直接应用）；to: main 或 apply: confirm 走主代理",
+    ],
+    evidence: ["tests/consult-vm.test.ts", "tests/consult-review-chain.test.ts"],
+  }),
   runtimeGlobal("log", { signature: "log(message) => void" }),
   runtimeGlobal("phase", {
     signature: "phase(title, options?) => void",
@@ -612,6 +635,7 @@ export const WORKFLOW_CAPABILITY_DEFINITION: WorkflowCapabilityDefinition = {
   optionShapes: [
     AGENT_OPTIONS,
     CHECKPOINT_OPTIONS,
+    CONSULT_OPTIONS,
     PHASE_OPTIONS,
     VERIFY_OPTIONS,
     JUDGE_PANEL_OPTIONS,

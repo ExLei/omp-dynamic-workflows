@@ -244,7 +244,7 @@ return { ledger, synthesis };
 | `retry` | `retry(thunk, { attempts?=3, until? }) → unknown` —— `until` 必须同步 |
 | `gate` | `gate(thunk, validator, { attempts?=3 }) → { ok, value, attempts }` —— validator 需返回 `{ ok }` |
 | `checkpoint` | `checkpoint(prompt, { default?, headless?, kind?, choices?, timeoutMs? }) → unknown` |
-| `consult` | `consult(prompt, { to?="agent", agent?, apply?="auto", timeoutMs? }) → Promise<{ applied, revisedScript?, summary }>` —— 运行中干预点：live 执行中断脚本并挂起运行，重放时返回 journaled 结果 |
+| `consult` | `consult(prompt, { to?="agent", agent?, apply?="auto", timeoutMs? }) → { applied, revisedScript?, summary }`（同步函数，await 兼容）—— live 执行抛 `CONSULT_PENDING` 中断脚本并挂起运行，重放命中返回 journaled 结果；同步路径（headless）报工具错误含回复指引 |
 | `phase` | `phase(title, { budget? })` —— 声明当前阶段，可带软性子预算 |
 | `log` | `log(message)` —— 新代码用它；`console.*` 仅为兼容保留 |
 | `args`、`cwd`、`process`、`budget` | 调用参数 · 运行 cwd · `{ cwd() }` · `{ total, spent(), remaining() }`（软性记账） |

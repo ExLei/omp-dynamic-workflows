@@ -31,6 +31,9 @@
   未决，不会静默越过咨询点）。
 - 同步执行（headless）下 consult 表现为工具报错，文案含回复指引；`to:"agent"` 的自动
   审阅链照常后台执行，结果以 follow-up 投递。
+- `parallel()` 内的 consult：`CONSULT_PENDING` 是不可恢复错误，不会被吞成 `null`——它
+  穿透扇出逃逸脚本，中止在飞的兄弟智能体（fatal abort），运行照常挂起为
+  `waiting_consult` 等待答复。
 
 <a id="topology"></a>
 ## 拓扑

@@ -1343,10 +1343,6 @@ export async function runWorkflow<T = unknown>(
   for (const diagnostic of bindingDiagnostics) logger.warn(diagnostic.message);
   const context = vm.createContext({
     ...projectGlobals,
-    // consult is a per-run closure like agent()/checkpoint(); it is injected
-    // directly until the capability contract declares it (task 8 adds the
-    // binding, at which point projectGlobals carries it too — same value).
-    consult,
     // Object/Array/JSON/Math/Date/Promise/Set/Map/etc. come from the vm realm
     // itself — we deliberately do NOT inject host built-ins, whose .constructor
     // would be the host Function (a determinism-guard bypass). Math/Date are
