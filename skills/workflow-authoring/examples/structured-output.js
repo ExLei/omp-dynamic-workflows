@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: "Extract" }],
 };
 
-// ADAPT: validate and bound work, then keep the schema as small as downstream JavaScript needs.
+// ADAPT: 校验并限制 work，再把 schema 精简到下游 JavaScript 所需的最小程度。
 const work = args && Array.isArray(args.work) ? args.work.slice(0, 8) : [{ id: "sample" }];
 const outputSchema = {
   type: "object",
@@ -30,7 +30,7 @@ for (let index = 0; index < work.length; index++) {
     outputs.push({ id, status: "missing", summary: null });
     continue;
   }
-  // INVARIANT: field access happens only after schema validation guarantees this shape.
+  // INVARIANT: 只有在 schema 校验保证了这一结构之后才允许访问字段。
   outputs.push({ id, status: "complete", summary: result.summary.toUpperCase(), confidence: result.confidence });
 }
 

@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: "Classify" }, { title: "Act" }],
 };
 
-// ADAPT: validate and bound items, categories, prompts, and schemas for the task.
+// ADAPT: 针对任务校验并限制 items、类别、提示词与 schema。
 const items =
   args && Array.isArray(args.items) ? args.items : [{ id: "sample", task: "Classify one sample item" }];
 const categories = ["direct", "parallel", "iterative"];
@@ -43,7 +43,7 @@ const routed = items.flatMap((item, index) =>
   classifications[index] === null ? [] : [{ item, classification: classifications[index] }],
 );
 
-// INVARIANT: no routed action starts until the complete classification set exists.
+// INVARIANT: 分类集合完整产生之前，不启动任何已路由的动作。
 phase("Act");
 const actions = await parallel(
   routed.map(({ item, classification }, index) => () =>
@@ -55,7 +55,7 @@ const actions = await parallel(
 );
 const failedAction = routed.flatMap(({ item }, index) => (actions[index] === null ? [String(item.id)] : []));
 
-// INVARIANT: retain identities for failures in either stage.
+// INVARIANT: 任一阶段的失败都要保留其身份标识。
 return {
   handled: routed.flatMap(({ item, classification }, index) =>
     actions[index] === null

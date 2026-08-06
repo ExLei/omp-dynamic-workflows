@@ -1,15 +1,15 @@
-# Pattern selection
+# 模式选择
 
-Choose from data dependencies, then read only the matching example. JavaScript owns enumeration, identity, ordering, deduplication, bounds, stopping, brackets, and failure ledgers. Agents own semantic work.
+从数据依赖出发，然后只阅读匹配的示例。JavaScript 负责枚举、身份、排序、去重、界限、停止、括号与失败账本。智能体负责语义工作。
 
 <a id="fan-out-and-synthesize"></a>
-| Dependency shape | Pattern | Preserve when adapting | Example |
+| 依赖形状 | 模式 | 改编时保留 | 示例 |
 | --- | --- | --- | --- |
-| Heterogeneous items need different handling | Classify and act | Finish all classification before routed action; ledger classification and action failures by item ID | [Adapt](../examples/classify-and-act.js) |
-| Independent work needs whole-set judgment | Fan out and synthesize | Pass thunks; await the full set; give synthesis every intended ID, including `null` | [Adapt](../examples/fan-out-and-synthesize.js) |
-| Claims need skeptical checks | Adversarial verification | Use separate producer and skeptic calls; start skepticism after production; ledger both failures | [Adapt](../examples/adversarial-verification.js) |
-| Exploration should diverge before one rubric | Generate and filter | Finish generation; deterministically deduplicate and bound candidates before filter calls | [Adapt](../examples/generate-and-filter.js) |
-| Pairwise comparison beats absolute scoring | Tournament | Let JavaScript run the bounded bracket and byes; agents compare one pair; ledger match failures | [Adapt](../examples/tournament.js) |
-| Work cardinality is unknown | Loop until done | Deduplicate by stable key; count only successful empty rounds as dry; cap rounds; retain failed rounds | [Adapt](../examples/loop-until-done.js) |
+| 异构条目需要不同处理 | 分类后行动 | 先完成全部分类再做路由行动；按条目 ID 记录分类与行动失败 | [改编](../examples/classify-and-act.js) |
+| 独立工作需整体判断 | 扇出与综合 | 传 thunk；await 完整集合；把每个预期 ID（包括 `null`）都交给综合 | [改编](../examples/fan-out-and-synthesize.js) |
+| 主张需要怀疑式核查 | 对抗式验证 | 使用独立的产出方与质疑方调用；产出结束后再开始质疑；两方失败都记账 | [改编](../examples/adversarial-verification.js) |
+| 探索应先发散再按单一评分标准收敛 | 生成与过滤 | 先完成生成；在过滤调用之前确定性地去重并限制候选 | [改编](../examples/generate-and-filter.js) |
+| 两两比较优于绝对评分 | 锦标赛 | 让 JavaScript 运行有界的括号与轮空；智能体只比较一对；记录比赛失败 | [改编](../examples/tournament.js) |
+| 工作量基数未知 | 循环直至完成 | 按稳定键去重；只把成功且为空的轮次计为干轮；限制轮数；保留失败的轮次 | [改编](../examples/loop-until-done.js) |
 
-For every pattern, validate and bound input before fan-out, use stable IDs and unique labels, preserve missing coverage, and return plain JSON data. Combine patterns only when the task has both dependency shapes. Direct work needs no orchestration.
+对每种模式，在扇出前校验并限制输入，使用稳定 ID 与唯一标签，保留缺失覆盖，并返回纯 JSON 数据。仅当任务同时具备两种依赖形状时才组合模式。直接工作无需编排。

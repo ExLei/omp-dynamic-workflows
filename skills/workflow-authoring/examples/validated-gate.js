@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: "Validate" }],
 };
 
-// ADAPT: replace the task, structured fields, and task-owned acceptance policy.
+// ADAPT: 替换任务、结构化字段与任务自有的验收策略。
 const task = args && typeof args.task === "string" ? args.task : "Produce an acceptable answer.";
 const maxAttempts =
   args && Number.isInteger(args.maxAttempts) ? Math.max(1, Math.min(args.maxAttempts, 5)) : 3;
@@ -22,7 +22,7 @@ const ledger = [];
 phase("Validate");
 const outcome = await gate(
   async (feedback, attempt) => {
-    // gate() supplies undefined feedback initially and a zero-based attempt index.
+    // gate() 最初提供 undefined 的 feedback，以及从 0 开始的尝试序号。
     const value = await agent(
       `${task}${feedback ? ` Address this validator feedback: ${feedback}` : ""}`,
       {
@@ -40,7 +40,7 @@ const outcome = await gate(
     return value;
   },
   (value) => {
-    // The validator must return an object. A bare boolean is never an accepting verdict.
+    // 校验器必须返回对象；裸布尔值永远不会被当作通过判定。
     const ok = value !== null && value.acceptable === true && value.answer.trim().length > 0;
     const feedback =
       value === null
@@ -54,7 +54,7 @@ const outcome = await gate(
   { attempts: maxAttempts },
 );
 
-// INVARIANT: return gate exhaustion explicitly together with every attempt and feedback handoff.
+// INVARIANT: 显式返回门禁耗尽状态，连同每一次尝试与反馈交接。
 return {
   ok: outcome.ok,
   value: outcome.value,

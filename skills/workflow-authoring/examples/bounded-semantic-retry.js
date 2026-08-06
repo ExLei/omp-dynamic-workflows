@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: "Attempt" }],
 };
 
-// ADAPT: define task-owned acceptance, prompts, bounds, and structured result fields.
+// ADAPT: 定义任务自有的验收标准、提示词、上限与结构化结果字段。
 const maxSemanticAttempts =
   args && Number.isInteger(args.maxSemanticAttempts) ? Math.max(1, Math.min(args.maxSemanticAttempts, 5)) : 3;
 const transportRetries =
@@ -29,7 +29,7 @@ for (let attempt = 1; attempt <= maxSemanticAttempts; attempt++) {
     {
       label: `semantic-attempt:${attempt}`,
       schema: resultSchema,
-      // Runtime retries repeat this same logical call after recoverable execution failures.
+      // 运行时的重试会在可恢复的执行失败后重复同一次逻辑调用。
       retries: transportRetries,
     },
   );
@@ -47,7 +47,7 @@ for (let attempt = 1; attempt <= maxSemanticAttempts; attempt++) {
   feedback = result.feedback;
 }
 
-// INVARIANT: semantic exhaustion is returned visibly; it is not presented as success or thrown away.
+// INVARIANT: 语义性尝试耗尽必须可见地返回，不得当作成功呈现，也不得丢弃。
 return {
   ok: acceptedResult !== null,
   exhausted: acceptedResult === null && attempts.length === maxSemanticAttempts,

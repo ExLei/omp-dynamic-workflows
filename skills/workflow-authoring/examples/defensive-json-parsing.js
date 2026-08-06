@@ -4,15 +4,13 @@ export const meta = {
   phases: [{ title: "Extract" }],
 };
 
-// Asking a model to "return STRICT JSON" in the prompt does not change what
-// agent() gives back: without `schema`, the result is always the assistant's
-// raw text. Reading a field off unparsed text (or off a plain-text agent()
-// call in general) fails silently — `result.verdict` is `undefined`, not an
-// error, and a fleet of such calls can look fully "successful" while every
-// aggregator downstream gets undefined values. Prefer the `schema` option
-// (see structured-output.js) whenever the shape matters; use this pattern
-// only when a schema genuinely isn't available (e.g. an agentType/model that
-// cannot be schema-validated).
+// 在提示词中要求模型「返回 STRICT JSON」并不会改变 agent() 的返回内容：
+// 未指定 `schema` 时，结果始终是 assistant 的原始文本。从未解析的文本上
+// 读取字段（或者笼统地从纯文本的 agent() 调用上读取）会静默失败——
+// `result.verdict` 是 `undefined` 而不是错误；成批这样的调用看起来可能
+// 完全「成功」，而下游每个聚合器拿到的都是 undefined。只要输出结构重要，
+// 就优先使用 `schema` 选项（见 structured-output.js）；仅当确实无法使用
+// schema 时才用本模式（例如无法做 schema 校验的 agentType/model）。
 function parseOrFlag(text, requiredKeys) {
   if (typeof text !== "string") return { ok: false, raw: text };
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -30,7 +28,7 @@ function parseOrFlag(text, requiredKeys) {
   return { ok: true, value };
 }
 
-// ADAPT: validate and bound work, then keep required fields as small as downstream JavaScript needs.
+// ADAPT: 校验并限制 work，再把必填字段精简到下游 JavaScript 所需的最小集合。
 const work = args && Array.isArray(args.work) ? args.work.slice(0, 8) : [{ id: "sample" }];
 const requiredKeys = ["verdict", "reason"];
 const outputs = [];
@@ -56,7 +54,7 @@ for (let index = 0; index < work.length; index++) {
     outputs.push({ id, status: "unparseable", verdict: null });
     continue;
   }
-  // INVARIANT: field access happens only after parseOrFlag confirms the required keys exist.
+  // INVARIANT: 只有在 parseOrFlag 确认必填键存在之后才允许访问字段。
   outputs.push({ id, status: "complete", verdict: parsed.value.verdict });
 }
 

@@ -1,9 +1,9 @@
-# Helper reference index
+# helper 参考索引
 
-Use a helper only when it expresses the task's policy. Preserve candidate or work identity outside helper results that may omit failed agents.
+仅当 helper 表达了任务的策略时使用它。在可能省略失败智能体的 helper 结果之外，保留候选或工作的身份。
 
-- Read [quality helpers](quality-helpers.md) for `verify()` or `judgePanel()`.
-- Read the [retry helper](retry-helper.md) for `retry()`.
-- Read [specialized helpers](specialized-helpers.md) for `completenessCheck()`, `loopUntilDry()`, `gate()`, or `checkpoint()`.
+- 使用 `verify()` 或 `judgePanel()` 时阅读[质量 helper](quality-helpers.md)。
+- 使用 `retry()` 时阅读[重试 helper](retry-helper.md)。
+- 使用 `completenessCheck()`、`loopUntilDry()`、`gate()` 或 `checkpoint()` 时阅读[专用 helper](specialized-helpers.md)。
 
-Runtime agent retries repeat recoverable execution failures; helper attempts are new semantic calls. Bound both layers and ledger exhaustion.
+运行时智能体重试会重复可恢复的执行失败；helper 尝试是新的语义调用。两层都要设限，并为耗尽记账。

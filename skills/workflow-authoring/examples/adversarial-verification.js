@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: "Produce" }, { title: "Verify" }],
 };
 
-// ADAPT: validate and bound topics; define the evidence standard and schemas.
+// ADAPT: 校验并限制 topics，定义证据标准与 schema。
 const topics =
   args && Array.isArray(args.topics) ? args.topics : [{ id: "sample", topic: "Verify one sample claim" }];
 const rubric = args && typeof args.rubric === "string" ? args.rubric : "Evidence is direct and sufficient";
@@ -39,7 +39,7 @@ const reviewable = topics.flatMap((topic, index) =>
 );
 
 phase("Verify");
-// INVARIANT: each skeptic is a fresh agent call, never the producer reviewing itself.
+// INVARIANT: 每位质疑者都是一次全新的 agent 调用，绝不让产出者自我审查。
 const verdicts = await parallel(
   reviewable.map(({ topic, production }, index) => () =>
     agent(

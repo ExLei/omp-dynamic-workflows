@@ -1,13 +1,13 @@
-# Version compatibility
+# 版本兼容
 
-The installed package, capability-contract content, and this skill must describe the same extension version. Read the version line generated at the top of [capabilities](capabilities.md); the skill's frontmatter version and package version must match it.
+已安装的包、能力契约内容与本技能必须描述同一扩展版本。阅读[能力索引](capabilities.md)顶部生成的行；技能 frontmatter 中的版本与包版本必须与之匹配。
 
-`present-at` means a capability is confirmed in the recorded version. It is an honest baseline, not a claim about the first historical release that introduced the capability. The contract format has its own version because descriptor shape can evolve separately from extension content.
+`present-at` 表示该能力在记录版本中已确认。它是一个诚实的基线，而不是关于首次引入该能力的历史版本的主张。契约格式有它自己的版本，因为描述符形状可以独立于扩展内容演化。
 
-When copying a workflow between installations:
+在安装之间复制工作流时：
 
-1. Check the destination's generated version and exact capability facts.
-2. Re-check every supported global, option, and constraint used by the script.
-3. Treat compatibility entries as preservation aids, not portable recommendations.
-4. Re-resolve dynamic model routes and agent types from destination context; static docs intentionally contain no live entries.
-5. Prefer runtime behavior when prose and execution disagree, and report the documentation mismatch rather than changing behavior during an authoring fix.
+1. 检查目标位置的生成版本与确切能力事实。
+2. 重新检查脚本使用的每个受支持的全局、选项与约束。
+3. 把兼容条目视为保留辅助，而不是可移植建议。
+4. 从目标上下文重新解析动态模型路由与智能体类型；静态文档有意不包含任何实时条目。
+5. 当散文与执行不一致时，优先采用运行时行为，并在编写修复期间报告文档不匹配，而不是改变行为。

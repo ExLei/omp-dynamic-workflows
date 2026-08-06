@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: "Explore" }, { title: "Deliver" }],
 };
 
-// ADAPT: validate the work and choose phase budgets, prompts, and schemas; add invocation-level tokenBudget only when the user explicitly requests a cap.
+// ADAPT: 校验工作并选择各阶段预算、提示词与 schema；仅当用户明确要求上限时才添加调用级 tokenBudget。
 const work = args && Array.isArray(args.work) ? args.work.slice(0, 8) : [{ id: "sample" }];
 const phaseBudget =
   args && Number.isFinite(args.phaseBudget) ? Math.max(1, Math.min(args.phaseBudget, 100000)) : 2000;
@@ -32,7 +32,7 @@ for (let index = 0; index < work.length; index++) {
     else explored.push({ id, index, result });
   } catch (error) {
     if (!error || error.code !== "TOKEN_BUDGET_EXHAUSTED") throw error;
-    // INVARIANT: the soft gate blocks this and later calls; retain every intended identity as missing coverage.
+    // INVARIANT: 软门禁会拦截本次及后续调用；把所有预期身份标识保留为缺失覆盖。
     exploreMissing.push(...work.slice(index).map((remaining) => String(remaining.id)));
     break;
   }
@@ -65,7 +65,7 @@ phases.push({
   missing: deliverMissing,
 });
 
-// INVARIANT: phase and total budgets are soft pre-call gates; completed in-flight work may overshoot a limit.
+// INVARIANT: 阶段预算与总预算都是调用前的软门禁；已完成的进行中工作可能超出上限。
 return {
   phases,
   delivered,

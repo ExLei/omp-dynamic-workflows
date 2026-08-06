@@ -1,30 +1,30 @@
 ---
 name: workflow-authoring
-description: Guidance for writing, editing, reviewing, and debugging JavaScript workflow code for pi-dynamic-workflows. Use when authoring or changing workflow scripts; not for merely running an existing workflow.
+description: 关于为 pi-dynamic-workflows 编写、编辑、审阅与调试 JavaScript 工作流代码的指南。适用于编写或修改工作流脚本；仅运行已有工作流时无需使用。
 metadata:
   version: "3.5.0"
 ---
 
-# Workflow authoring
+# 工作流编写
 
-Load this skill when workflow JavaScript changes. Running an existing workflow needs no authoring reference.
+当工作流 JavaScript 代码发生变更时加载本技能。仅运行已有工作流无需编写参考。
 
-## Choose a branch
+## 选择分支
 
-Read only what the task needs:
+只阅读任务所需的内容：
 
-- **Write or edit:** start with [runtime](references/runtime.md). Add [pattern selection](references/pattern-selection.md) for topology, [lifecycle](references/lifecycle.md) for limits or resume, and [focused recipes](references/focused-recipes.md) for the matching concern.
-- **Helper task:** read [quality helpers](references/quality-helpers.md) only for `verify` or `judgePanel`, the [retry helper](references/retry-helper.md) only for `retry`, and [specialized helpers](references/specialized-helpers.md) only for `completenessCheck`, `loopUntilDry`, `gate`, or `checkpoint`.
-- **Review:** use the [review checklist](references/review.md), plus only the matching [quality](references/quality-helpers.md) or [specialized](references/specialized-helpers.md) helper contracts.
-- **Debug:** use the [debugging map](references/debugging.md).
-- **Routing:** read [registry ownership](references/registry-ownership.md) before using `model`, `tier`, phase models, or `agentType`; use environment-specific names only when context supplies them.
-- **Exact lookup or portability:** start with the generated [capability index](references/capabilities.md). Follow its exhaustive-facts pointer only for constraints or support boundaries. Use [versions](references/versions.md) when moving scripts between installations.
+- **编写或编辑：** 从[运行时](references/runtime.md)开始。拓扑参考[模式选择](references/pattern-selection.md)，限制或恢复参考[生命周期](references/lifecycle.md)，对应场景参考[场景配方](references/focused-recipes.md)。
+- **helper 任务：** 仅用于 `verify` 或 `judgePanel` 时阅读[质量 helper](references/quality-helpers.md)，仅用于 `retry` 时阅读[重试 helper](references/retry-helper.md)，仅用于 `completenessCheck`、`loopUntilDry`、`gate` 或 `checkpoint` 时阅读[专用 helper](references/specialized-helpers.md)。
+- **审阅：** 使用[审阅清单](references/review.md)，外加仅匹配的[质量](references/quality-helpers.md)或[专用](references/specialized-helpers.md) helper 契约。
+- **调试：** 使用[调试地图](references/debugging.md)。
+- **路由：** 使用 `model`、`tier`、阶段模型或 `agentType` 之前，先阅读[注册表归属](references/registry-ownership.md)；仅当上下文提供环境专用名称时才使用它们。
+- **精确查询或可移植性：** 从生成的[能力索引](references/capabilities.md)开始。仅当涉及约束或支持边界时，再跟随其穷尽事实指针。在安装之间迁移脚本时使用[版本](references/versions.md)。
 
-## Invariants
+## 不变量
 
-- Start with literal `export const meta = { name, description }`; declare phases as an array of used `{ title }` objects and enter each named phase.
-- Call `agent()` at least once, give every call a short unique `label`, and return plain JSON data explicitly.
-- Pair ordered results with stable work IDs before filtering. When one agent consumes another's selected result, include both its stable ID and actual data in the downstream prompt. Treat recoverable `null` as missing coverage and report it.
-- Bound fan-out, loops, retries, agents, and concurrency to the task. Treat invocation-level token and time caps as opt-in user constraints, not defaults.
-- Use `log()` for new code; `console` is compatibility-only.
-- Write plain JavaScript without imports or filesystem modules. Pass nondeterminism through `args`; `Date.now()`, `Math.random()`, and no-argument `new Date()` are unavailable.
+- 以字面量 `export const meta = { name, description }` 开头；将阶段声明为所用 `{ title }` 对象的数组，并进入每个具名阶段。
+- 至少调用一次 `agent()`，为每次调用赋予简短唯一的 `label`，并显式返回纯 JSON 数据。
+- 在过滤之前，将有序结果与稳定的工作 ID 配对。当一个智能体消费另一个智能体已选中的结果时，在下游提示中同时包含其稳定 ID 与实际数据。将可恢复的 `null` 视为缺失覆盖并报告。
+- 将扇出、循环、重试、智能体与并发限制在与任务相符的范围内。将调用级 token 与时间上限视为可选加入的用户约束，而非默认值。
+- 新代码使用 `log()`；`console` 仅用于兼容。
+- 编写不含导入或文件系统模块的纯 JavaScript。通过 `args` 传递不确定性；`Date.now()`、`Math.random()` 与无参 `new Date()` 不可用。

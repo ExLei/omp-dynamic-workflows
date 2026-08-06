@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: "Generate" }, { title: "Filter" }],
 };
 
-// ADAPT: choose the topic, rubric, candidate schema, and a task-appropriate batch bound.
+// ADAPT: 选择主题、评审标准、候选 schema 以及适合任务的批次上限。
 const topic = args && typeof args.topic === "string" ? args.topic : "candidate ideas";
 const rubric = args && typeof args.rubric === "string" ? args.rubric : "Distinct and fit for purpose";
 const batchCount = args && Number.isInteger(args.batches) ? Math.max(1, Math.min(args.batches, 8)) : 3;
@@ -32,7 +32,7 @@ const batches = await parallel(
 );
 const failedBatches = batches.flatMap((batch, index) => (batch === null ? [index + 1] : []));
 
-// INVARIANT: JavaScript performs stable, normalized first-wins deduplication before filter calls.
+// INVARIANT: 在过滤调用之前，由 JavaScript 执行稳定、归一化的先到先得去重。
 const seen = new Set();
 const deduplicated = [];
 for (const batch of batches) {

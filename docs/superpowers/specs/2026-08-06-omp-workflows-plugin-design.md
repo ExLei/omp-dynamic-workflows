@@ -3,6 +3,12 @@
 日期：2026-08-06
 状态：已批准（分节审查通过）
 
+> **执行状态（2026-08-06 补记）**：M1–M5 全部实现并验收。测试 93 个全绿；
+> ACP 相关验证分布在 `workflow-tool-sync.test.ts` / `workflow-watch.test.ts`（无独立
+> `acp-bridge.test.ts`，见计划文档对应说明）；另增 `subagent-sync.test.ts`。
+> 2026-08-06 晚些时候修复 omp 17.2.9 加载崩溃（`workflow` 工具 args schema 改用
+> `Type.Object` 构造，见 `src/workflow-tool.ts` 注释），修复后 17.2.9 实测兼容。
+
 ## 背景
 
 `zerx-lab/omp-dynamic-workflows` 是 Claude Code dynamic workflows 的 omp 移植版。评估发现三个能力缺口：

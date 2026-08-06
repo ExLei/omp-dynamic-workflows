@@ -2,7 +2,12 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
-**目标：** fork 改造 omp-dynamic-workflows：补 ACP 会话的 workflow 进度显示、子代理全量同步主代理工具/技能、MCP 白名单、saved workflows 改 `.js`、Web 与命令/工具文案中文化。
+> **执行状态（2026-08-06 补记）**：任务 1–10 全部实现（分支 `feat/omp-workflows-rework`，
+> 后续合并至 main）。回归：`bunx tsc --noEmit` 干净 + `bun test` 93 个全绿。清单见
+> `README.md`「开发与验证」。下文复选框是计划期的原始勾选记录，未逐项回填；
+> 具体实现以源码与测试为准。
+
+**目标：** fork 改造 omp-dynamic-workflows：补 ACP 会话的 workflow 进 度显示、子代理全量同步主代理工具/技能、MCP 白名单、saved workflows 改 `.js`、Web 与命令/工具文案中文化。
 
 **架构：** 纯插件层改造（不动 omp 核心）。ACP 显示走「无 UI 会话默认同步 + onUpdate 1s 节流 ASCII 帧」（omp ACP 层已把 tool_execution_update 映射为 tool_call_update）；子代理能力用 omp 官方通道（preloadedExtensionPaths/skills/enableMCP 参数 + 创建后 applyActiveToolsByName 过滤 MCP）；配置保持 JSON；saved workflows 用 CC 原版 `.js` 格式（无兼容层）。
 

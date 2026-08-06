@@ -1,37 +1,37 @@
-# Lifecycle, limits, and resume
+# 生命周期、限制与恢复
 
-## Bounds and budget
+## 界限与预算
 
-Set finite bounds that match the work for `maxAgents`, `concurrency`, and `agentRetries`; bound loops and semantic retries inside the script. Treat invocation-level `agentTimeoutMs` and `tokenBudget` as opt-in user constraints, not precautionary defaults. Omit `tokenBudget` unless the user supplies a cap or explicitly asks you to choose one. If asked to choose, allow for every planned agent call, retry, synthesis, and verification pass, with headroom. A tight gate can terminate coverage; it does not reduce work already in flight. An omitted `agentTimeoutMs` uses the configured `defaultAgentTimeoutMs` and is otherwise unbounded. An omitted `tokenBudget` uses the configured `defaultTokenBudget` and is otherwise unlimited.
+为 `maxAgents`、`concurrency` 与 `agentRetries` 设置与工作匹配的有限界限；在脚本内限制循环与语义重试。将调用级 `agentTimeoutMs` 与 `tokenBudget` 视为可选加入的用户约束，而非预防性默认值。除非用户提供了上限或明确要求你选择，否则省略 `tokenBudget`。若被要求选择，须为每一次计划的智能体调用、重试、综合与校验环节留足余量。过紧的门禁会终止覆盖；它不会减少已在途中的工作。省略 `agentTimeoutMs` 时使用配置的 `defaultAgentTimeoutMs`，否则不受限制。省略 `tokenBudget` 时使用配置的 `defaultTokenBudget`，否则不限。
 
-Enter a phase budget with `phase("Name", { budget: N })`; phase metadata does not carry budgets. `N` is a token allowance, not a call or round count: size it for the intended agent work instead of copying a small iteration limit. Token and phase budgets are soft pre-call gates. Spend lands after agents finish, so concurrent work can overshoot. A phase budget gates later calls in that phase; it neither reserves tokens nor cancels active calls. `budget.spent()` and `budget.remaining()` include nested work.
+用 `phase("Name", { budget: N })` 进入带预算的阶段；阶段元数据不携带预算。`N` 是 token 配额，不是调用或轮次计数：应按预期智能体工作量来设定，而不是复制一个小的迭代上限。token 与阶段预算是调用前的软门禁。花费在智能体结束后才落账，因此并发工作可能超支。阶段预算限制该阶段之后的调用；它既不预留 token，也不取消进行中的调用。`budget.spent()` 与 `budget.remaining()` 包含嵌套工作。
 
-## Checkpoints
+## 检查点
 
-A checkpoint consumes an agent slot but no tokens. A workflow invocation is backgrounded by default, and background workflows are headless: they cannot display checkpoint confirmation. Use `background: false` when a checkpoint must reach the foreground host confirmation interface. Without a UI, a checkpoint returns the declared default (or `true` when omitted) unless `headless: "abort"` is selected. Confirm is implemented. Input, select, and timeout fields are declared for compatibility/future behavior but are not authoring promises.
+检查点消耗一个智能体槽位但不消耗 token。工作流调用默认在后台运行，而后台工作流是无头的：它们无法显示检查点确认。需要检查点到达前台宿主确认界面时，使用 `background: false`。无 UI 时，检查点返回声明的默认值（省略时为 `true`），除非选择了 `headless: "abort"`。确认已实现。输入、选择与超时字段仅为兼容/未来行为而声明，不是编写承诺。
 
-Checkpoint answers are journaled and can replay during an unchanged resume prefix. Do not describe checkpoints as guaranteed arbitrary forms or as remote steering.
+检查点答案会被记账，并可在不变的恢复前缀中重放。不要把检查点描述为有保证的任意表单或远程操控。
 
-## Retry and recoverable failure
+## 重试与可恢复失败
 
-Recoverable execution failures retry according to the per-agent option or invocation-time tool input, then return `null`. Nonrecoverable failures throw without becoming `null`. The logical `retry()` combinator is separate: it performs new agent calls and returns its last result when exhausted unless the script records and handles that outcome.
+可恢复的执行失败按每个智能体的选项或调用时工具输入重试，然后返回 `null`。不可恢复的失败会抛出，而不会变成 `null`。逻辑上的 `retry()` 组合器是分开的：它执行新的智能体调用，耗尽时返回其最后结果，除非脚本记录并处理该结果。
 
-Always retain `{ id, status, result }` or an equivalent ledger for each intended work unit. Filtering `null` before recording identity turns an execution failure into invisible missing coverage.
+始终为每个预期工作单元保留 `{ id, status, result }` 或等价账本。在记录身份之前过滤 `null`，会把执行失败变成不可见的覆盖缺失。
 
-`AGENT_EMPTY_OUTPUT` (whitespace-only text from a schema-less call) is recoverable and retries like any other transient failure. Some models occasionally produce it on an otherwise-working first attempt; a fleet built on such a model should set `agentRetries: 1-2` rather than treat one occurrence as a failed run. A `schema` call never trips this check — schema noncompliance is its own, nonrecoverable failure (see [serialization](#serialization)).
+`AGENT_EMPTY_OUTPUT`（无 schema 调用产生的纯空白文本）是可恢复的，会像其他瞬时失败一样重试。某些模型偶尔会在本来正常的首次尝试中产生它；基于此类模型的调用集群应设置 `agentRetries: 1-2`，而不是把一次出现当作运行失败。带 `schema` 的调用永远不会触发此检查——schema 不合规是它自己独立的、不可恢复的失败（见[序列化](#serialization)）。
 
-## Resume
+## 恢复
 
-Resume replays only the longest unchanged prefix of journaled calls. Once one call is new, changed, or unusable, that call and all later calls execute live. Stable lexical call ordering, prompts, labels, routing options, and inputs therefore matter. Retry chains can cascade after an upstream miss. Nested workflows do not reuse the parent's resume journal.
+恢复只重放已记账调用中最长的不变前缀。一旦某个调用是新的、已变更或不可用，该调用与其后的所有调用都会实时执行。因此稳定的词法调用顺序、提示、标签、路由选项与输入都很重要。上游缺失后，重试链可能级联。嵌套工作流不复用父级的恢复账本。
 
-Only a call that finishes with a real result is journaled. A call whose every attempt was recoverable (including one that only ever produced `AGENT_EMPTY_OUTPUT`) contributes no journal entry, so resuming that run reruns exactly that call and everything lexically after it live; the earlier, already-succeeded prefix still replays from cache.
+只有以真实结果结束的调用才会被记账。每次尝试都可恢复（包括只产生过 `AGENT_EMPTY_OUTPUT` 的调用）的调用不会留下任何账本条目，因此恢复该运行会实时重新执行恰好那个调用及其词法之后的所有内容；更早的、已成功的前缀仍从缓存重放。
 
-The runtime blocks common accidental nondeterminism, but this is not a security boundary. Pass timestamps, randomness, and external decisions through `args`.
+运行时阻止常见的意外不确定性，但这不是安全边界。时间戳、随机性与外部决策通过 `args` 传递。
 
-## Nesting and shared state
+## 嵌套与共享状态
 
-`workflow(savedName, childArgs)` runs sequentially inline, allows one nested level, and shares limiter, counters, token accounting, and shared store with the parent. It is not independent capacity. Use only a saved-workflow name provided by context; do not guess registry entries or pass raw scripts as a new authoring pattern even where compatibility behavior accepts them.
+`workflow(savedName, childArgs)` 顺序内联运行，允许一层嵌套，并与父级共享限流器、计数器、token 记账与共享存储。它不是独立的容量。只使用上下文提供的已保存工作流名称；不要猜测注册表条目，也不要把原始脚本作为新的编写模式传入，即使兼容行为接受它们。
 
-## Serialization
+## 序列化
 
-The workflow's explicit return value crosses the tool boundary. Keep it JSON-serializable and preserve coverage ledgers in the returned data. Structured agent schemas must be plain JSON Schema. Schema success guarantees the downstream field shape expected by JavaScript; without a schema, treat output as text or `null`. A prompt that asks the model to "return JSON" does not change this — without `schema`, parse and validate that text defensively before reading a field, and ledger an unparseable result instead of reading `undefined` off it (see [defensive text parsing](focused-recipes.md)).
+工作流的显式返回值跨越工具边界。保持其 JSON 可序列化，并在返回数据中保留覆盖账本。结构化智能体 schema 必须是纯 JSON Schema。schema 成功保证了 JavaScript 期望的下游字段形状；没有 schema 时，将输出视为文本或 `null`。提示要求模型「返回 JSON」并不会改变这一点——没有 `schema` 时，在读取字段前应防御性地解析并校验该文本，并把不可解析的结果记账，而不是从中读出 `undefined`（见[防御性文本解析](focused-recipes.md)）。

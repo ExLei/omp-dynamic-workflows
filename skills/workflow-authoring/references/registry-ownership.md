@@ -1,17 +1,17 @@
-# Dynamic registry ownership
+# 动态注册表归属
 
-Model routes and agent types are dynamic references. Their shape and owner are documented, but available names depend on active user/project configuration and are intentionally absent from static skill files.
+模型路由与智能体类型是动态引用。它们的形状与归属方有文档说明，但可用名称取决于当前用户/项目配置，并有意识地不出现在静态技能文件中。
 
-## Model routes
+## 模型路由
 
-The model-tier configuration owns route names. Standard routes are `small`, `medium`, and `big`; use another route only when its name and purpose are supplied in context. A route is selected with `tier`. An exact user-requested model is selected with `model`.
+模型分层配置拥有路由名称。标准路由为 `small`、`medium` 与 `big`；仅当上下文提供其他路由的名称与用途时才使用。路由通过 `tier` 选择。用户精确请求的模型通过 `model` 选择。
 
-## Agent types
+## 智能体类型
 
-The agent registry owns agent-type names and their bound instructions, tools, model, and isolation policy. Use `agentType` only when context supplies both its name and purpose. Do not infer an agent type from a role-like label.
+智能体注册表拥有智能体类型名称及其绑定的指令、工具、模型与隔离策略。仅当上下文同时提供 `agentType` 的名称与用途时才使用它。不要从类似角色的标签推断智能体类型。
 
-## Priority
+## 优先级
 
-Routing priority is explicit `model` > `agentType` model > `tier` > phase model > metadata model > implicit `medium` > session default. Higher priority means selection, not "try this then fall back to the next selector." Avoid specifying competing selectors unless deliberately overriding a lower-priority default.
+路由优先级为显式 `model` > `agentType` 模型 > `tier` > 阶段模型 > 元数据模型 > 隐式 `medium` > 会话默认。更高优先级意味着选中，而不是「先试这个，失败再退回下一个选择器」。除非有意覆盖某个较低优先级的默认值，否则避免指定相互竞争的选择器。
 
-Unavailability is asymmetric by design. An explicit `model`, `agentType` model, `tier`, or phase model that resolves to a model the registry doesn't have throws — it never silently runs a different model instead. A tier failure names its source (for example: `tier "big" from model-tiers.json resolves to "deadprov/x", which is not available`), so the mistake is traceable back to the config that caused it. Only the implicit default `medium` tier — the route an UNTAGGED agent gets routed through when the script requested no `model`, `tier`, `agentType`, or phase model — degrades to the session default when it is unavailable, since that agent never asked for that specific model; the degrade still logs a one-time warning into the run so it stays discoverable instead of silent.
+不可用性是有意不对称的。显式 `model`、`agentType` 模型、`tier` 或阶段模型解析到注册表没有的模型时会抛出——绝不会静默改跑另一个模型。分层失败会指出其来源（例如：`tier "big" from model-tiers.json resolves to "deadprov/x", which is not available`），因此错误可以回溯到导致它的配置。只有隐式默认 `medium` 分层——即脚本未请求 `model`、`tier`、`agentType` 或阶段模型时，未打标签的智能体被路由经过的路径——在不可用时降级到会话默认，因为该智能体从未请求过那个具体模型；降级仍会在运行中记录一次性警告，使其保持可发现而不是无声无息。

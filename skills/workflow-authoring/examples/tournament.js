@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: "Compete" }, { title: "Judge" }],
 };
 
-// ADAPT: choose the task, pairwise rubric, schemas, and a suitable contender bound.
+// ADAPT: 选择任务、两两评审标准、schema 以及合适的参赛者上限。
 const task = args && typeof args.task === "string" ? args.task : "Propose a candidate";
 const rubric = args && typeof args.rubric === "string" ? args.rubric : "Prefer the better task fit";
 const contenderCount = args && Number.isInteger(args.contenders)
@@ -38,7 +38,7 @@ const failedMatches = [];
 const bracket = [];
 
 phase("Judge");
-// INVARIANT: JavaScript owns the bounded bracket; agents only judge one pair at a time.
+// INVARIANT: 由 JavaScript 掌管受限的淘汰赛对阵表；agent 每次只评审一对。
 let roundNumber = 1;
 while (round.length > 1) {
   const matches = [];

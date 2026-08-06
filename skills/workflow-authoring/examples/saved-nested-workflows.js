@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: "Prepare" }, { title: "Run saved workflow" }],
 };
 
-// ADAPT: accept only a saved workflow name supplied in context; never guess an installed name.
+// ADAPT: 只接受由 context 提供的已保存工作流名称，绝不猜测已安装的名称。
 const savedWorkflowName = args && typeof args.savedWorkflowName === "string" ? args.savedWorkflowName : null;
 if (!savedWorkflowName) throw new Error("args.savedWorkflowName must be supplied by context");
 const jobs = args && Array.isArray(args.jobs) ? args.jobs.slice(0, 8) : [{ id: "sample" }];
@@ -28,14 +28,14 @@ if (preparationMissing || !preparation.ready) {
 }
 for (const job of preparationMissing || !preparation.ready ? [] : jobs) {
   const id = String(job.id);
-  // INVARIANT: await each nested run before starting the next; workflow() permits only one nested level.
+  // INVARIANT: 每次嵌套运行都 await 完成后再启动下一次；workflow() 只允许一层嵌套。
   const result = await workflow(savedWorkflowName, job);
   const missing = result === null || (typeof result === "object" && result !== null && result.result === null);
   nested.push({ id, status: missing ? "missing" : "complete", result });
 }
 const missing = nested.filter((entry) => entry.status === "missing").map((entry) => entry.id);
 
-// INVARIANT: nested runs share parent agent/concurrency/token limits, accounting, and store state.
+// INVARIANT: 嵌套运行共享父级的 agent/并发/token 限制、计量与存储状态。
 return {
   preparation: { status: preparationMissing ? "missing" : "complete", result: preparation },
   nested,

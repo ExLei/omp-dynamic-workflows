@@ -19,11 +19,7 @@ export const CAPABILITY_INDEX_PATH = "skills/workflow-authoring/references/capab
 export const CAPABILITY_DETAIL_PATH = "skills/workflow-authoring/references/capability-details.md";
 
 /** Documents that embed the byte-identical supported-capability table. */
-export const CAPABILITY_TABLE_PUBLICATION_PATHS = [
-  CAPABILITY_INDEX_PATH,
-  "README.md",
-  "docs/workflow-authoring.md",
-] as const;
+export const CAPABILITY_TABLE_PUBLICATION_PATHS = [CAPABILITY_INDEX_PATH] as const;
 /** All generated capability publication surfaces checked for drift. */
 export const CAPABILITY_PUBLICATION_PATHS = [...CAPABILITY_TABLE_PUBLICATION_PATHS, CAPABILITY_DETAIL_PATH] as const;
 
@@ -36,20 +32,20 @@ function display(value: string | null): string {
 }
 
 function optionText(option: OptionDescriptor): string {
-  const required = option.optional ? "optional" : "required";
-  const defaultValue = option.default === null ? "" : `; default: ${option.default}`;
-  const constraints = option.constraints.length === 0 ? "" : `; ${option.constraints.join("; ")}`;
-  const dynamic = option.dynamicReference === null ? "" : `; dynamic reference: ${option.dynamicReference}`;
-  return `- \`${option.name}\`: ${option.type} (${required}${defaultValue}${constraints}${dynamic})`;
+  const required = option.optional ? "可选" : "必填";
+  const defaultValue = option.default === null ? "" : `；默认：${option.default}`;
+  const constraints = option.constraints.length === 0 ? "" : `；${option.constraints.join("；")}`;
+  const dynamic = option.dynamicReference === null ? "" : `；动态引用：${option.dynamicReference}`;
+  return `- \`${option.name}\`：${option.type}（${required}${defaultValue}${constraints}${dynamic}）`;
 }
 
 function compactOptions(fact: StaticCapabilityFact): string {
   if (!fact.options) return "—";
   return fact.options.options
     .map((option) => {
-      const optionality = option.optional ? "optional" : "required";
-      const defaultValue = option.default === null ? "" : `; default: ${option.default}`;
-      return `\`${escapeTable(option.name)}\`: ${escapeTable(option.type)} (${optionality}${escapeTable(defaultValue)})`;
+      const optionality = option.optional ? "可选" : "必填";
+      const defaultValue = option.default === null ? "" : `；默认：${option.default}`;
+      return `\`${escapeTable(option.name)}\`：${escapeTable(option.type)}（${optionality}${escapeTable(defaultValue)}）`;
     })
     .join("<br>");
 }
@@ -70,7 +66,7 @@ export function renderSupportedCapabilityTable(): string {
       `| ${escapeTable(fact.label)} | ${fact.classification} | ${display(fact.signature)} | ${compactOptions(fact)} |`,
   );
   return `${TABLE_START}
-| Name | Classification | Signature | Options and defaults |
+| 名称 | 分类 | 签名 | 选项与默认值 |
 | --- | --- | --- | --- |
 ${rows.join("\n")}
 ${TABLE_END}`;
@@ -131,20 +127,20 @@ function detail(fact: StaticCapabilityFact): string {
     `<a id="${anchorFor(fact)}"></a>`,
     `## ${fact.label}`,
     "",
-    `- Classification: \`${fact.classification}\``,
-    `- Support: \`${fact.support}\``,
-    `- Signature: ${display(fact.signature)}`,
+    `- 分类：\`${fact.classification}\``,
+    `- 支持：\`${fact.support}\``,
+    `- 签名：${display(fact.signature)}`,
   ];
   if (fact.options) {
-    lines.push(`- Option shape: \`${fact.options.id}\``, ...fact.options.options.map(optionText));
+    lines.push(`- 选项结构：\`${fact.options.id}\``, ...fact.options.options.map(optionText));
   }
-  if (fact.constraints.length > 0) lines.push(...fact.constraints.map((constraint) => `- Constraint: ${constraint}`));
+  if (fact.constraints.length > 0) lines.push(...fact.constraints.map((constraint) => `- 约束：${constraint}`));
   if (fact.dynamicReference) {
     lines.push(
-      `- Dynamic reference owner: \`${fact.dynamicReference.owner}\``,
-      `- Item shape: \`${fact.dynamicReference.itemShape}\``,
-      `- Future lookup connection: \`${fact.dynamicReference.connection}\``,
-      "- Live values are intentionally absent from this static reference.",
+      `- 动态引用归属：\`${fact.dynamicReference.owner}\``,
+      `- 条目结构：\`${fact.dynamicReference.itemShape}\``,
+      `- 未来查找连接：\`${fact.dynamicReference.connection}\``,
+      "- 此静态引用有意不包含动态值。",
     );
   }
   return `${lines.join("\n")}\n`;
@@ -155,14 +151,14 @@ function detail(fact: StaticCapabilityFact): string {
 export function renderWorkflowCapabilityReference(): string {
   const { definition } = WORKFLOW_CAPABILITY_CONTRACT;
   return `${GENERATED_MARKER}
-# Workflow capability index
+# 工作流能力索引
 
-Contract format: \`${definition.versions.format.version}\`<br>
-Contract content / skill / extension: \`${definition.versions.content.version}\`
+契约格式：\`${definition.versions.format.version}\`<br>
+契约内容 / 技能 / 扩展：\`${definition.versions.content.version}\`
 
-This compact generated index covers supported runtime globals and workflow-tool inputs. For constraints, compatibility behavior, internal boundaries, and dynamic-reference ownership, follow the [exhaustive generated facts](capability-details.md).
+本紧凑的生成索引覆盖受支持的运行时全局与工作流工具输入。涉及约束、兼容行为、内部边界与动态引用归属时，请跟随[穷尽生成事实](capability-details.md)。
 
-## Supported capability index
+## 支持的能力索引
 
 ${renderSupportedCapabilityTable()}
 `;
@@ -175,12 +171,12 @@ export function renderWorkflowCapabilityDetails(): string {
   const facts = WORKFLOW_CAPABILITY_CONTRACT.projectStaticReferenceFacts();
 
   return `${GENERATED_MARKER}
-# Exhaustive workflow capability facts
+# 详尽的工作流能力事实
 
-Contract format: \`${definition.versions.format.version}\`<br>
-Contract content / skill / extension: \`${definition.versions.content.version}\`
+契约格式：\`${definition.versions.format.version}\`<br>
+契约内容 / 技能 / 扩展：\`${definition.versions.content.version}\`
 
-Every exact fact below is projected from the installed extension's capability contract. Explanatory judgment belongs in the hand-written references next to this file.
+下方每条确切事实均由已安装扩展的能力契约投影而来。解释性判断应放在本文件旁的手写参考文档中。
 
 ${facts.map(detail).join("\n")}`;
 }

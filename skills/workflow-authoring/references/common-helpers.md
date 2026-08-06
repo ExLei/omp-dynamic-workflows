@@ -1,4 +1,4 @@
-# Common helper index
+# 通用 helper 索引
 
-- Read [quality helpers](quality-helpers.md) for `verify()` or `judgePanel()`.
-- Read the [retry helper](retry-helper.md) for `retry()`.
+- 使用 `verify()` 或 `judgePanel()` 时阅读[质量 helper](quality-helpers.md)。
+- 使用 `retry()` 时阅读[重试 helper](retry-helper.md)。

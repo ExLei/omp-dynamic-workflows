@@ -1,43 +1,43 @@
-# Workflow review checklist
+# 工作流审阅清单
 
-Review author-visible behavior, not formatting preferences. When behavior depends on a quality or control combinator, consult only its exact [quality](quality-helpers.md) or [specialized](specialized-helpers.md) helper contract before correcting the script.
+审阅作者可见的行为，而非格式偏好。当行为依赖某个质量或控制组合器时，在修正脚本前只查阅其精确的[质量](quality-helpers.md)或[专用](specialized-helpers.md) helper 契约。
 
-## Envelope and contract
+## 外壳与契约
 
-- Is literal `export const meta` the first statement, with a short unique name and useful description?
-- Are only used phases declared, and does each named phase begin at the intended boundary?
-- Does the script call at least one agent and explicitly return JSON-serializable data?
-- Are imports and nondeterministic APIs absent?
+- 字面量 `export const meta` 是否是第一条语句，且带有简短唯一的名称与有用的描述？
+- 是否只声明了用到的阶段，且每个具名阶段是否在预期边界开始？
+- 脚本是否至少调用一个智能体，并显式返回 JSON 可序列化数据？
+- 是否没有导入与不确定性 API？
 
-## Topology and identity
+## 拓扑与身份
 
-- Does topology match dependencies: thunks for independent parallel work, stages for per-item pipelines, barriers before whole-set synthesis?
-- Is cardinality bounded before fan-out?
-- Is every agent label short and unique?
-- Are stable work-unit IDs retained beside ordered results?
-- Are failed/null identities recorded before any filtering?
+- 拓扑是否匹配依赖：独立并行工作用 thunk，逐条流水线用阶段，整体综合前设屏障？
+- 扇出前是否限制了基数？
+- 每个智能体标签是否简短且唯一？
+- 稳定工作单元 ID 是否与有序结果并排保留？
+- 失败的/为 null 的身份是否在任何过滤前记录？
 
-## Data and routing
+## 数据与路由
 
-- Does JavaScript consume structured fields only after a small plain JSON Schema guarantees them?
-- Does synthesis receive complete coverage and failure ledgers?
-- Are `model`, `tier`, and `agentType` used according to selector priority?
-- Did every nonstandard route or agent type come from context with a name and purpose?
+- JavaScript 是否只在小型纯 JSON Schema 保证之后才消费结构化字段？
+- 综合是否收到完整覆盖与失败账本？
+- `model`、`tier` 与 `agentType` 是否按选择器优先级使用？
+- 每个非标准路由或智能体类型是否都来自上下文，且带有名称与用途？
 
-## Lifecycle
+## 生命周期
 
-- Are runtime retries and semantic retries separately bounded?
-- Are loops, agents, concurrency, timeout, and token spend bounded appropriately?
-- Are budget claims honest about soft gates and in-flight overshoot?
-- Are checkpoints limited to implemented confirmation/headless behavior?
-- Does nesting stay one level and account for shared limits/store?
-- Would lexical call order remain stable under resume?
+- 运行时重试与语义重试是否分别设限？
+- 循环、智能体、并发、超时与 token 花费是否有适当界限？
+- 预算声明对软门禁与在途超支是否诚实？
+- 检查点是否限于已实现的确认/无头行为？
+- 嵌套是否保持一层，并计入共享限制/存储？
+- 词法调用顺序在恢复下是否保持稳定？
 
-## Compatibility and publication
+## 兼容性与发布
 
-- Does new code use `log()` rather than compatibility-only `console`?
-- Is compatibility behavior clearly distinguished from supported authoring behavior and VM substrate?
-- Do package, skill, and generated contract versions match?
-- Do all relative links resolve within the publishable package?
+- 新代码是否使用 `log()` 而非仅兼容的 `console`？
+- 兼容行为是否与受支持的编写行为及 VM 基底清楚区分？
+- 包、技能与生成的契约版本是否匹配？
+- 所有相对链接是否在可发布包内可解析？
 
-Use [lifecycle](lifecycle.md) for lifecycle reasoning. Open the compact [capability index](capabilities.md) only when the review turns on a disputed signature, default, support boundary, or installed version; follow its exhaustive-facts pointer only when the index is insufficient.
+生命周期推理使用[生命周期](lifecycle.md)。仅当审阅涉及有争议的签名、默认值、支持边界或已安装版本时，才打开紧凑的[能力索引](capabilities.md)；仅当索引不足时才跟随其穷尽事实指针。
