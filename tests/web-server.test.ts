@@ -556,6 +556,34 @@ describe("workflow web server", () => {
     });
   });
 
+  test("resume rejects a non-object JSON body (null/array/number/string) with 400, never a silent bare resume", async () => {
+    await withServer(async (server, manager) => {
+      const base = `http://127.0.0.1:${server.port}`;
+      const parkScript =
+        'export const meta = { name: "consult-run", description: "park" };\n' +
+        'consult("q", { to: "main" });\n' +
+        "return 'unreachable';";
+      const { runId, promise: parked } = manager.startInBackground(parkScript);
+      await parked.catch(() => {});
+      expect(manager.getRun(runId)?.status).toBe("waiting_consult");
+
+      // 最终审查必修 2：JSON.parse 结果非对象（null/数组/数字/字符串）此前要么
+      // 抛 TypeError（null → 500）、要么 body.script 静默 undefined → 裸恢复、
+      // 丢弃调用方意图的回复（waiting_consult 运行时等于静默消费一次答复）。现在
+      // 一律 400，run 保持 waiting_consult 不动。
+      for (const raw of ["null", "[]", "42", '"str"']) {
+        const res = await fetch(`${base}/api/runs/${runId}/resume`, {
+          method: "POST",
+          headers: auth,
+          body: raw,
+        });
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toContain("对象");
+        expect(manager.getRun(runId)?.status).toBe("waiting_consult");
+      }
+    });
+  });
+
   test("disk-only GET /api/runs/:id surfaces revisedScript ?? script after a cold start", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "omp-web-diskonly-"));
     try {

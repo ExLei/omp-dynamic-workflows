@@ -47,7 +47,10 @@ export function Runtime() {
               >
                 <Play className="inline size-3" /> {status === "waiting_consult" ? "回复并继续" : "恢复"}
               </Button>
-              <Button disabled={status !== "running" && status !== "paused"} onClick={() => void control("stop")}>
+              <Button
+                disabled={status !== "running" && status !== "paused" && status !== "waiting_consult"}
+                onClick={() => void control("stop")}
+              >
                 <Square className="inline size-3" /> 停止
               </Button>
               <Button disabled={!selectedRunId || status === "running"} tone="danger" onClick={() => void remove()}>

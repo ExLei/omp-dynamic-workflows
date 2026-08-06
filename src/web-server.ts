@@ -321,20 +321,28 @@ export function startWorkflowWebServer(options: WorkflowWebServerOptions): Workf
           // bare resume: non-string script → 400, bad JSON → 400. An empty
           // body stays valid — the console's 恢复 button posts a bare resume.
           const text = await request.text();
-          let body: { script?: unknown };
+          let body: unknown;
           if (text.trim() === "") {
             body = {};
           } else {
             try {
-              body = JSON.parse(text) as { script?: unknown };
+              body = JSON.parse(text);
             } catch {
               return json({ error: "请求体不是合法 JSON" }, 400);
             }
           }
-          if (body.script !== undefined && typeof body.script !== "string") {
+          // 必修 2（最终审查收口）：JSON.parse 结果必须先过对象形状校验——null /
+          // 数组 / 数字 / 字符串都会让 `body.script` 要么抛 TypeError（null →
+          // 500）、要么静默得到 undefined（其余形状 → 裸恢复、丢弃调用方意图的
+          // 回复），与上面「A malformed body must fail loudly」自相矛盾。
+          if (typeof body !== "object" || body === null || Array.isArray(body)) {
+            return json({ error: "请求体必须为对象" }, 400);
+          }
+          const parsed = body as { script?: unknown };
+          if (parsed.script !== undefined && typeof parsed.script !== "string") {
             return json({ error: "script 必须为字符串" }, 400);
           }
-          const script = body.script;
+          const script = parsed.script;
           // A reply script must pass the same gate every run script does — a
           // broken script gets a 400 here instead of dying mid-run.
           if (script !== undefined) {

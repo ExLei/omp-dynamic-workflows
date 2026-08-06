@@ -220,6 +220,139 @@ describe("resolveConsult", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  test("regression (最终审查必修 1): no-anchor pending reply against a settled:false journal tail resumes, never strands the run", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "omp-consult-noanchor-settledfalse-"));
+    try {
+      // 带计数 agent mock：第 1 次调用挂住直到 intervene 的 abort（旧执行体干净
+      // 收尾、不干扰新执行），第 2 次调用挂住直到测试放行（证明恢复后的执行真正
+      // 跑到了 agent，而非仅状态翻转）。
+      let invocation = 0;
+      const { promise: agentStartedPromise, resolve: agentStarted } = Promise.withResolvers<void>();
+      const { promise: releaseSecond, resolve: releaseSecondResolve } = Promise.withResolvers<string>();
+      const manager = new WorkflowManager({
+        cwd,
+        agent: {
+          run(_prompt: string, options?: AgentRunOptions<never>) {
+            agentStarted();
+            if (invocation++ === 0) {
+              const { promise, reject } = Promise.withResolvers<never>();
+              options?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+              return promise;
+            }
+            return releaseSecond;
+          },
+        } as unknown as WorkflowManagerOptions["agent"],
+      });
+
+      // 失败 consult（settled:false 尾条）。
+      // to:"main" 变体：consult 之后接 agent——park 时不触发自动审阅链（to:"main"
+      // 链不启动），mock 的调用计数确定（0=EDITED resume 的 agent，1=回复后 resume
+      // 的 agent），无链干扰。
+      const PARK_SCRIPT =
+        'export const meta = { name: "consult-then-agent", description: "consult then agent" };\n' +
+        'consult("q", { to: "main" });\n' +
+        'return await agent("go", { label: "worker" });';
+      const runId = await parkConsultRun(manager, PARK_SCRIPT);
+      await manager.markConsultFailed(runId, "review failed");
+
+      // 带编辑脚本 resume：agent 调用插到 consult 之前——index 0 对 settled:false
+      // 尾条 hash-miss → 直播执行 agent → 运行中（journal 尾条仍是 settled:false，
+      // 新执行尚未 journal 任何条目）。
+      const EDITED =
+        'export const meta = { name: "agent-then-consult", description: "agent first" };\n' +
+        'await agent("go", { label: "worker" });\n' +
+        'consult("q2", { to: "main" });\n' +
+        "return 'unreachable';";
+      expect(await manager.resume(runId, { script: EDITED })).toBe(true);
+      await agentStartedPromise;
+      expect(manager.getRun(runId)?.status).toBe("running");
+
+      // 运行中 intervene → 无锚点 pending（无 callIndex → resolveConsult 不写
+      // journal entry、无法遮蔽 settled:false 尾条）。
+      expect(manager.intervene(runId)).toBe(true);
+      expect(manager.getRun(runId)?.status).toBe("waiting_consult");
+      expect(manager.getRun(runId)?.pendingConsult?.callIndex).toBeUndefined();
+      // 让被 abort 的旧执行体收尾（catch 尾释放 run lease）——真实使用中 intervene
+      // 与 reply 是两个独立请求，事件循环必然让出；这里显式让出，避免 resolveConsult
+      // 内部 resume 在同一 tick 撞上仍未释放的旧 lease（acquireRunLease 同进程 EEXIST）。
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const tailBefore = manager.getPersistence().load(runId)?.journal?.at(-1);
+      expect((tailBefore?.result as { settled?: boolean } | undefined)?.settled).toBe(false);
+
+      // 无脚本 reply：BUG 前 resolveConsult 先清 pending/置 paused/persist，再调
+      // 内部 resume()——被 settled:false 前置检查否决 → 返回 false 但状态已变更：
+      // 回复被静默消费、运行搁浅在 paused 且无 pendingConsult（最终审查已独立
+      // 复现）。修复后 resume 绕过该检查（安全依据见 resume/resolveConsult 注释），
+      // index 0 对 settled:false 尾条仍 hash-miss → agent 直播 → 运行恢复。
+      const rePended = once(manager, "consult-pending");
+      const ok = await manager.resolveConsult(runId);
+      expect(ok).toBe(true);
+      expect(manager.getRun(runId)?.status).toBe("running");
+      expect(manager.getRun(runId)?.pendingConsult).toBeUndefined();
+
+      // 放行 agent：执行真正前进——脚本里的 consult("q2") 是全新调用（callIndex 1
+      // 无 journal 条目）→ 重新挂起（有锚点，用户可再答复），证明绕过检查没有
+      // 静默跳过咨询点。机制说明（复检 B 次要 ① 订正）：重放对 index 0 的
+      // settled:false 尾条是 hash-miss（直播调用是 agent()，与 consult 条目哈希
+      // 不匹配），settled:false 重挂分支并未被触达——本断言证明的是「运行真正
+      // 恢复且停在下一个咨询点」，不是该分支本身。
+      releaseSecondResolve("done");
+      await rePended;
+      expect(manager.getRun(runId)?.status).toBe("waiting_consult");
+      expect(manager.getRun(runId)?.pendingConsult?.prompt).toBe("q2");
+    } finally {
+      rmSync(workflowProjectPaths(cwd).rootDir, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("regression (顺手修 3): empty-string journalPrefix fails loudly, never parks on a degenerate identity", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "omp-consult-empty-prefix-"));
+    try {
+      const manager = new WorkflowManager({
+        cwd,
+        agent: {
+          run(_prompt: string, _options?: AgentRunOptions<never>) {
+            // A CONSULT_PENDING whose journalPrefix is an empty string — the
+            // old guard only checked typeof string, so "" passed and the run
+            // parked on a degenerate identity (resolveConsult would journal
+            // under runId "", replay never hits, the reply is silently
+            // dropped). It must fail loudly like any other malformed payload.
+            return Promise.reject(
+              new WorkflowError("consult pending", WorkflowErrorCode.CONSULT_PENDING, {
+                recoverable: false,
+                payload: { journalPrefix: "", callIndex: 0, prompt: "q", opts: { to: "agent" } },
+              }),
+            );
+          },
+        } as unknown as WorkflowManagerOptions["agent"],
+      });
+      const errors: unknown[] = [];
+      const consultPending: unknown[] = [];
+      manager.on("error", (e) => errors.push(e));
+      manager.on("consult-pending", (e) => consultPending.push(e));
+
+      const SCRIPT =
+        'export const meta = { name: "empty-prefix", description: "bad payload" };\n' +
+        'return await agent("go", { label: "worker" });';
+      const { runId, promise } = manager.startInBackground(SCRIPT);
+      const rejected = await promise.catch((e: unknown) => e);
+      expect(rejected).toBeInstanceOf(WorkflowError);
+
+      // Loud failure: failed + error event, no waiting_consult park, nothing
+      // persisted as a pending intervention.
+      expect(manager.getRun(runId)?.status).toBe("failed");
+      expect(manager.getRun(runId)?.pendingConsult).toBeUndefined();
+      expect(manager.getPersistence().load(runId)?.status).toBe("failed");
+      expect(manager.getPersistence().load(runId)?.pendingConsult).toBeUndefined();
+      expect(errors).toHaveLength(1);
+      expect(consultPending).toEqual([]);
+    } finally {
+      rmSync(workflowProjectPaths(cwd).rootDir, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("markConsultFailed", () => {

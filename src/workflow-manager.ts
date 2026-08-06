@@ -46,6 +46,10 @@ function isConsultPendingPayload(
   const p = payload as Record<string, unknown>;
   return (
     typeof p.journalPrefix === "string" &&
+    // 顺手修 3（最终审查收口）：空字符串必须拒绝——守卫只查 typeof string 时，
+    // "" 通过守卫、运行 park 在退化身份上（resolveConsult 会按 runId "" 写
+    // journal、重放永不命中、答复静默丢弃）。
+    p.journalPrefix !== "" &&
     typeof p.callIndex === "number" &&
     typeof p.prompt === "string" &&
     typeof p.opts === "object" &&
@@ -1515,7 +1519,25 @@ export class WorkflowManager extends EventEmitter {
     // Resume from the persisted (or edited) script. The persist above already
     // flipped disk to paused, so resume()'s status guards and journal source
     // see the resolved state, not waiting_consult.
-    return this.resume(runId, options?.script !== undefined ? { script: options.script } : undefined);
+    //
+    // 必修 1（最终审查收口）：skipConsultSettledCheck 必须为 true——resume 的
+    // settled:false 前置检查是为拒绝「静默跳过未答复 consult」的裸恢复设计的，
+    // resolveConsult 不是裸恢复，两条路径都绝不静默跳过：
+    //   1) 有锚点 pending（callIndex/journalPrefix 齐备）：上文刚写了遮蔽性
+    //      journal entry，答复本身成为新尾条——检查本就会通过（settled 不存在）；
+    //   2) 无锚点 pending（intervene 所建，无 callIndex 故不写 entry、无法遮蔽
+    //      尾条）或脚本变化：重放对 settled:false 条目按 miss 处理 → 直播执行 →
+    //      consult 重新挂起、用户仍可答复（参见 workflow.ts consult 的 settled:false
+    //      分支），不是静默跳过。
+    // 若不绕过：无锚点 pending 遇到 settled:false 尾条时，上文已清 pending/置
+    // paused/persist，这里 resume() 返回 false —— resolveConsult 返回 false 但
+    // 状态已变更：回复被静默消费、运行搁浅在 paused 且无 pendingConsult、工具层
+    // 误报「回复未生效」（最终审查已独立复现）。
+    return this.resume(runId, {
+      ...(options?.script !== undefined ? { script: options.script } : {}),
+      // 仅 resolveConsult 传 true（内部标志，公开调用方不可见）。
+      skipConsultSettledCheck: true,
+    });
   }
 
   /**
@@ -2059,8 +2081,20 @@ export class WorkflowManager extends EventEmitter {
    * this keeps the existing single-arg `resume(runId)` callers (e.g. the
    * UsageLimitScheduler) unchanged. `opts.args` overrides the persisted args
    * only when provided; otherwise the persisted args are kept.
+   *
+   * `opts.skipConsultSettledCheck` is INTERNAL — only resolveConsult() passes
+   * true. The settled:false veto below exists to refuse PLAIN resumes that
+   * would silently skip past a consult whose review failed without an answer;
+   * resolveConsult is never a plain resume (see the safety rationale at its
+   * call site), so its internal resume must not be vetoed AFTER it has
+   * already cleared the pending consult and flipped the run to paused — a
+   * veto there would strand the run (reply consumed, status paused, no
+   * pendingConsult) while resolveConsult still reports false.
    */
-  async resume(runId: string, opts?: { script?: string; args?: unknown }): Promise<boolean> {
+  async resume(
+    runId: string,
+    opts?: { script?: string; args?: unknown; skipConsultSettledCheck?: boolean },
+  ): Promise<boolean> {
     // Guard: refuse to resume a run that is already running, one that was
     // intentionally aborted (pause/stop/Esc), or one parked on a pending
     // consult (waiting_consult — only resolveConsult may release it, by
@@ -2099,7 +2133,11 @@ export class WorkflowManager extends EventEmitter {
       lastEntry.result !== null &&
       "settled" in lastEntry.result &&
       lastEntry.result.settled === false;
-    if (hasUnsettledConsult && (opts?.script === undefined || opts.script === persisted.script)) {
+    if (
+      hasUnsettledConsult &&
+      opts?.skipConsultSettledCheck !== true &&
+      (opts?.script === undefined || opts.script === persisted.script)
+    ) {
       return false;
     }
     const lease = this.persistence.acquireRunLease(runId);

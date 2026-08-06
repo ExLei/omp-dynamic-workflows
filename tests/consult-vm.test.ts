@@ -167,4 +167,110 @@ return pending;
     expect(run.result).toBe(WorkflowErrorCode.CONSULT_PENDING);
     expect(run.agentCount).toBe(3);
   });
+
+  test("consult inside parallel escapes as CONSULT_PENDING and aborts the in-flight sibling", async () => {
+    // 规格 §9: parallel 内 consult——中断在飞兄弟（recoverable:false 路径）。
+    // parallel() 对非可恢复错误 rethrow（参照 workflow.ts 的 parallel 实现：
+    // recoverable 错误吞成 null，非 recoverable 抛给上层），因此 CONSULT_PENDING
+    // 必须逃逸整个 parallel，而不是作为 null 悄悄进入 results 数组让脚本"静默完成"。
+    const parallelScript = `
+export const meta = { name: "pc", description: "parallel consult" };
+phase("P1");
+const results = await parallel([
+  () => agent("slow", { label: "slow" }),
+  () => consult("should we continue?", { to: "agent" }),
+]);
+return results;
+`;
+    let siblingRan = false;
+    let siblingAborted = false;
+    const outcome = await runWorkflow(parallelScript, {
+      runId: "r-par",
+      agent: {
+        run: async (_prompt: string, opts?: { signal?: AbortSignal }) => {
+          // thunk[0] 先同步启动（map 顺序），此时 thunk[1] 的 consult 同步抛出。
+          siblingRan = true;
+          // 挂起直到 run-fatal abort 触发（sibling 的 AbortSignal 由
+          // runFatalController 经 onRunFatal 转发）。若实现退化到不中止兄弟，
+          // runWorkflow 的 drain 会卡住直到 bun 的 per-test timeout 判失败——
+          // 失败信号完全由信号驱动，不依赖真实墙钟。
+          await new Promise<void>((resolve) => {
+            const signal = opts?.signal;
+            if (signal?.aborted) {
+              siblingAborted = true;
+              resolve();
+              return;
+            }
+            signal?.addEventListener(
+              "abort",
+              () => {
+                siblingAborted = true;
+                resolve();
+              },
+              { once: true },
+            );
+          });
+          return "aborted-sibling";
+        },
+      },
+    }).catch((e) => e);
+    // 兄弟确实在飞，且 CONSULT_PENDING 逃逸了 parallel（非吞 null 静默完成）。
+    expect(siblingRan).toBe(true);
+    expect(outcome.code).toBe(WorkflowErrorCode.CONSULT_PENDING);
+    expect(outcome.payload).toMatchObject({
+      prompt: "should we continue?",
+      // 兄弟 agent 先占 callSeq 0，consult 是本次运行的第 2 个调用。
+      callIndex: 1,
+      journalPrefix: "r-par:",
+    });
+    // 顶层逃逸 sealed runFatalController → 在飞兄弟被中止：运行失败而非静默完成。
+    expect(siblingAborted).toBe(true);
+  });
+
+  test("consult inside a nested workflow() journals to the child frame namespace", async () => {
+    // 规格 §9: 嵌套 workflow() 内 consult——journal 写入子帧命名空间。
+    // 子帧 runId 为 `${runId}-nested${++nestedCallSeq}`，因此 payload.journalPrefix
+    // 必须是子帧前缀（r-nest-nested1:），而不是父帧的 r-nest:；重放时答复也要落
+    // 在子帧键上才能命中。
+    const childScript = `
+export const meta = { name: "child", description: "child with consult" };
+phase("C1");
+const outcome = consult("nested question?", { to: "agent" });
+return outcome.summary;
+`;
+    const parentScript = `
+export const meta = { name: "p", description: "nested consult parent" };
+phase("P1");
+const childResult = await workflow("child");
+return childResult;
+`;
+    const saved: Record<string, string> = { child: childScript };
+    const nestedHash = hashConsult("nested question?", { to: "agent" });
+
+    // Live：子帧 consult 抛出，payload 携带子帧命名空间。
+    const outcome = await runWorkflow(parentScript, {
+      runId: "r-nest",
+      loadSavedWorkflow: (name: string) => saved[name],
+    }).catch((e) => e);
+    expect(outcome.code).toBe(WorkflowErrorCode.CONSULT_PENDING);
+    expect(outcome.payload).toMatchObject({
+      prompt: "nested question?",
+      callIndex: 0,
+      journalPrefix: "r-nest-nested1:",
+      opts: { to: "agent" },
+    });
+
+    // Replay：答复写在子帧键 r-nest-nested1:0 下，嵌套 consult 重放命中。
+    const replay = await runWorkflow(parentScript, {
+      runId: "r-nest",
+      loadSavedWorkflow: (name: string) => saved[name],
+      resumeJournal: new Map([
+        [
+          "r-nest-nested1:0",
+          { index: 0, runId: "r-nest-nested1", hash: nestedHash, result: { applied: true, summary: "ok" } },
+        ],
+      ]),
+    });
+    expect(replay.result).toBe("ok");
+  });
 });
