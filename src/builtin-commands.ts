@@ -138,7 +138,7 @@ export function registerBuiltinWorkflows(
 
   if (!alreadyRegistered(pi, "deep-research")) {
     pi.registerCommand("deep-research", {
-      description: "跨网络研究一个问题，并交叉核对来源",
+      description: "深度研究：扇出网络搜索、抓取来源、3 票对抗验证主张、输出带引用的报告",
       async handler(args: string, ctx: ExtensionCommandContext) {
         if (runSavedShadowIfPresent("deep-research", args, ctx)) return;
         const question = args.trim();
@@ -179,7 +179,7 @@ export function registerBuiltinWorkflows(
 
   if (!alreadyRegistered(pi, "code-review")) {
     pi.registerCommand("code-review", {
-      description: "多角度并行代码审查：7 个专项发现器（正确性、复用、简化、效率、抽象层级）+ 验证阶段 → 排序后的发现",
+      description: "分级多角度代码审查：正确性/复用简化效率/抽象层级 finder 池 + 按位置分组验证 + 排序后的发现",
       async handler(args: string, ctx: ExtensionCommandContext) {
         if (runSavedShadowIfPresent("code-review", args, ctx)) return;
         const input = args.trim();

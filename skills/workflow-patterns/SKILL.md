@@ -25,9 +25,9 @@ omp-dynamic-workflows 内置 5 个经过筛选和测试的工作流模式。每�
 
 | `name` | 适用场景 | `args` |
 | --- | --- | --- |
-| `deep-research` | 通过交叉核验的资料来源，在网络上研究一个问题 | `{ question: string, angles?: number, minSupport?: number }`；`angles`（默认 4）是不同搜索查询的数量；`minSupport`（默认 2）是一条论断要经受住交叉核验所需的最少不同来源数 |
+| `deep-research` | 扇出网络搜索、抓取来源、3 票对抗验证主张、输出带引用的报告 | `{ question: string, angles?: number, minSupport?: number }`；`angles`（默认 4，截 3..6）是搜索角度数；`minSupport`（默认 2，截 1..2）是杀死一条主张所需的**否决票数**——每条主张由 3 个独立怀疑者投票、默认怀疑、达到否决票数即弃，验证失败的归入 unverified（基础设施失败不读成被驳倒） |
 | `adversarial-review` | 调查某个任务或论断，再由持怀疑态度的审阅者交叉核验每一条发现 | `{ task: string, reviewers?: number, threshold?: number }` |
-| `code-review` | 对 diff 进行多角度审查（正确性、复用、简化、效率、抽象层次） | `{ diff: string, diffSource?: string }`；先自行获取 `diff`（例如 `git diff`、`gh pr diff <n>`），该路径不会替你抓取 |
+| `code-review` | 对 diff 进行分级多角度审查（正确性、复用、简化、效率、抽象层次），按位置分组验证 | `{ diff: string, diffSource?: string, level?: 'high'\|'xhigh'\|'max' }`；先自行获取 `diff`（例如 `git diff`、`gh pr diff <n>`），该路径不会替你抓取；`level`（默认 high）控制 finder 池与上限：high = 3 正确性 + 1 cleanup（≤10 发现）；xhigh/max = 追加抽象层次审查 + sweep 缺口扫描（≤15 发现） |
 | `multi-perspective` | 从多个独立视角并行分析一个主题，再综合成结论 | `{ topic: string, perspectives?: string[] }`；省略或少于 2 个时使用默认视角集（技术、产品、安全、用户体验、可维护性） |
 | `codebase-audit` | 针对代码库范围运行并行检查，再交叉验证并报告 | `{ scope: string, checks: string[] }` |
 

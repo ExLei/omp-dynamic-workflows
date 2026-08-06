@@ -73,7 +73,7 @@ function requireStringArray(value: unknown, argName: string, patternName: string
 export const BUILTIN_WORKFLOWS: readonly BuiltinWorkflowDescriptor[] = [
   {
     name: "deep-research",
-    description: "跨网络研究一个问题，并交叉核对来源。args: { question: string }。",
+    description: "深度研究：扇出网络搜索、抓取来源、3 票对抗验证主张、输出带引用的报告。args: { question: string, angles?: number, minSupport?: number }。",
     previewScript: generateDeepResearchWorkflow(),
     resolve(cwd, args) {
       requireNonEmptyString(asRecord(args).question, "question", "deep-research");
@@ -100,7 +100,7 @@ export const BUILTIN_WORKFLOWS: readonly BuiltinWorkflowDescriptor[] = [
   {
     name: "code-review",
     description:
-      "多角度并行代码审查：7 个专项发现器（正确性、复用、简化、效率、抽象层级）+ 验证阶段 → 排序后的发现。args: { diff: string, diffSource?: string }。",
+      "分级多角度代码审查：正确性/复用简化效率/抽象层级 finder 池 + 按位置分组验证 + 排序后的发现。args: { diff: string, diffSource?: string, level?: 'high'|'xhigh'|'max' }。",
     previewScript: generateCodeReviewWorkflow(),
     resolve(_cwd, args) {
       // Truncation past MAX_DIFF_CHARS already happens inside the generated

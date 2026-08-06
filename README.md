@@ -115,9 +115,9 @@ flowchart LR
 
 | `name` | 适用场景 | `args` |
 |---|---|---|
-| `deep-research` | 跨网检索一个问题并交叉核验来源 | `{ question, angles?=4, minSupport?=2 }` |
+| `deep-research` | 扇出网络搜索、抓取来源，3 票对抗验证主张后输出带引用的报告 | `{ question, angles?=4, minSupport?=2 }`（minSupport = 否决票数，截 1..2；每主张 3 个独立怀疑者、默认怀疑） |
 | `adversarial-review` | 先调查，再由怀疑派审阅者逐条交叉核验 | `{ task, reviewers?, threshold? }` |
-| `code-review` | 多视角 diff 评审（正确性、复用、简化、效率、抽象层次） | `{ diff, diffSource? }` —— diff 需自行获取 |
+| `code-review` | 分级多角度 diff 评审（正确性、复用、简化、效率、抽象层次），按位置分组验证 | `{ diff, diffSource?, level? }`（level：high/xhigh/max，默认 high）—— diff 需自行获取 |
 | `multi-perspective` | 多个独立视角并行分析后综合 | `{ topic, perspectives? }`（默认：技术、产品、安全、用户体验、可维护性） |
 | `codebase-audit` | 针对某范围并行检查后交叉验证 | `{ scope, checks[] }` |
 
