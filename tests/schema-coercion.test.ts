@@ -104,7 +104,7 @@ describe("normalizeSettings", () => {
   });
 
   test("syncMode: explicit valid values are kept, invalid/absent ones stay sparse", () => {
-    // 仅显式合法值输出键；非法值/缺省不物化 auto 缺省键（同三字段不变量，
+    // 仅显式合法值输出键；非法值/缺省不物化 auto 缺省键（同两字段不变量，
     // auto 语义由 workflow-tool.ts backgroundDefault ?? 兜底）。
     expect(normalizeSettings({ syncMode: "auto" })).toEqual({ syncMode: "auto" });
     expect(normalizeSettings({ syncMode: "always" })).toEqual({ syncMode: "always" });
@@ -120,11 +120,13 @@ describe("saveWorkflowSettings legacy cleanup", () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-settings-strip-"));
     try {
       const path = join(dir, "settings.json");
-      writeFileSync(path, JSON.stringify({ mcpServers: ["old"], enableIrc: true }));
+      writeFileSync(path, JSON.stringify({ mcpServers: ["old"], enableIrc: true, futureKey: 42 }));
       saveWorkflowSettings({ enableIrc: false }, { settingsPath: path });
       const saved = JSON.parse(readFileSync(path, "utf-8"));
       expect(saved.mcpServers).toBeUndefined();
       expect(saved.enableIrc).toBe(false);
+      // 规格契约：剔除旧键仅限 mcpServers，其余未知键保留行为不变。
+      expect(saved.futureKey).toBe(42);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
