@@ -41,6 +41,12 @@ export interface BuiltinWorkflowDescriptor {
   description: string;
   /** Build the script (and exec context) for one invocation; throws on invalid `args`. */
   resolve(cwd: string, args: unknown): BuiltinWorkflowInvocation;
+  /**
+   * Parameter-free script for display purposes (web console listing / editor).
+   * For patterns whose generator embeds caller args, placeholder values mark
+   * the injection points — the preview is for viewing, not invocation.
+   */
+  previewScript: string;
 }
 
 function asRecord(args: unknown): Record<string, unknown> {
@@ -68,6 +74,7 @@ export const BUILTIN_WORKFLOWS: readonly BuiltinWorkflowDescriptor[] = [
   {
     name: "deep-research",
     description: "跨网络研究一个问题，并交叉核对来源。args: { question: string }。",
+    previewScript: generateDeepResearchWorkflow(),
     resolve(cwd, args) {
       requireNonEmptyString(asRecord(args).question, "question", "deep-research");
       return {
@@ -84,6 +91,7 @@ export const BUILTIN_WORKFLOWS: readonly BuiltinWorkflowDescriptor[] = [
     name: "adversarial-review",
     description:
       "调查一个任务，再由持怀疑态度的审查者交叉核对每项发现。args: { task: string, reviewers?: number, threshold?: number }。",
+    previewScript: generateAdversarialReviewWorkflow(),
     resolve(_cwd, args) {
       requireNonEmptyString(asRecord(args).task, "task", "adversarial-review");
       return { script: generateAdversarialReviewWorkflow() };
@@ -93,6 +101,7 @@ export const BUILTIN_WORKFLOWS: readonly BuiltinWorkflowDescriptor[] = [
     name: "code-review",
     description:
       "多角度并行代码审查：7 个专项发现器（正确性、复用、简化、效率、抽象层级）+ 验证阶段 → 排序后的发现。args: { diff: string, diffSource?: string }。",
+    previewScript: generateCodeReviewWorkflow(),
     resolve(_cwd, args) {
       // Truncation past MAX_DIFF_CHARS already happens inside the generated
       // script at runtime (see code-review.ts); a caller invoking by name is
@@ -106,6 +115,7 @@ export const BUILTIN_WORKFLOWS: readonly BuiltinWorkflowDescriptor[] = [
     name: "multi-perspective",
     description:
       "并行从多个独立视角分析主题，然后综合。args: { topic: string, perspectives?: string[] }。",
+    previewScript: generateMultiPerspectiveWorkflow("<topic>", [...DEFAULT_MULTI_PERSPECTIVES]),
     resolve(_cwd, args) {
       const record = asRecord(args);
       const topic = requireNonEmptyString(record.topic, "topic", "multi-perspective");
@@ -120,6 +130,7 @@ export const BUILTIN_WORKFLOWS: readonly BuiltinWorkflowDescriptor[] = [
     name: "codebase-audit",
     description:
       "对代码库范围并行执行检查，然后交叉验证并报告。args: { scope: string, checks: string[] }。",
+    previewScript: generateCodebaseAuditWorkflow("<scope>", ["<check 1>", "<check 2>"]),
     resolve(_cwd, args) {
       const record = asRecord(args);
       const scope = requireNonEmptyString(record.scope, "scope", "codebase-audit");

@@ -86,7 +86,7 @@ export interface ServerState {
   cwd: string;
   runs: RunSummary[];
   saved: SavedWorkflowInfo[];
-  builtins: Array<{ name: string; description: string }>;
+  builtins: Array<{ name: string; description: string; script: string }>;
 }
 
 export type OutlineFlow = "sequence" | "parallel";

@@ -117,6 +117,19 @@ describe("workflow web server", () => {
     });
   });
 
+  test("builtins in /api/state carry a preview script", async () => {
+    await withServer(async (server) => {
+      const state = (await (await fetch(`http://127.0.0.1:${server.port}/api/state`, { headers: auth })).json()) as {
+        builtins: Array<{ name: string; script: string }>;
+      };
+      expect(state.builtins.length).toBe(5);
+      for (const builtin of state.builtins) {
+        expect(builtin.script, `${builtin.name} missing preview`).toBeTruthy();
+        expect(builtin.script).toContain("export const meta");
+      }
+    });
+  });
+
   test("never serves a file outside the asset root", async () => {
     await withServer(async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/%2e%2e%2f%2e%2e%2fpackage.json`);
@@ -193,6 +206,35 @@ describe("workflow web server", () => {
       expect(events.get("agentEnd")).toBe(2);
       expect(events.get("complete")).toBe(1);
       expect(events.get("snapshot")).toBeGreaterThan(0);
+    });
+  });
+
+  test("shared references across one response serialize intact at every occurrence", async () => {
+    await withServer(async (server) => {
+      const base = `http://127.0.0.1:${server.port}`;
+      const script = `export const meta = { name: "shared_ref", description: "probe" };\nawait agent("scan", { label: "w-x" });\nreturn args;`;
+      const { runId } = await (
+        await fetch(`${base}/api/runs`, {
+          method: "POST",
+          headers: auth,
+          body: JSON.stringify({ script, args: { tag: "shared" } }),
+        })
+      ).json();
+      expect(runId).toBeTruthy();
+
+      let detail: { status?: string; snapshot?: { result?: unknown } } = {};
+      for (let attempt = 0; attempt < 100; attempt++) {
+        detail = await (await fetch(`${base}/api/runs/${runId}`, { headers: auth })).json();
+        if (detail.status === "completed" || detail.status === "failed") break;
+        await Bun.sleep(25);
+      }
+
+      expect(detail.status).toBe("completed");
+      // The script returns `args` verbatim, and the detail response carries the
+      // same object as its own top-level `args` field. A cycle detector that
+      // remembers every object it ever saw flags the second occurrence as
+      // "[circular]"; only the current ancestor path may count as a cycle.
+      expect(detail.snapshot?.result).toEqual({ tag: "shared" });
     });
   });
 

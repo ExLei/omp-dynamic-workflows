@@ -60,7 +60,7 @@ interface WorkflowStore {
   cwd: string;
   runs: RunSummary[];
   saved: SavedWorkflowInfo[];
-  builtins: Array<{ name: string; description: string }>;
+  builtins: Array<{ name: string; description: string; script: string }>;
   snapshots: Record<string, WorkflowSnapshot>;
   selectedRunId: string | null;
   selectedAgentId: number | null;
@@ -382,7 +382,17 @@ export const useStore = create<WorkflowStore>((set, get) => ({
       set({ script: saved.script, runName: saved.name });
       void get().validate();
     } else {
-      set({ script: "", runName: name, notice: { kind: "info", text: `按名称解析:${name}` } });
+      const builtin = get().builtins.find((entry) => entry.name === name);
+      if (builtin) {
+        set({
+          script: builtin.script,
+          runName: builtin.name,
+          notice: { kind: "info", text: `内置模式预览：参数在运行时注入，实际调用请用斜杠命令或 workflow 工具的 name 入参` },
+        });
+        void get().validate();
+      } else {
+        set({ script: "", runName: name, notice: { kind: "info", text: `按名称解析:${name}` } });
+      }
     }
   },
 }));

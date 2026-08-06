@@ -168,7 +168,11 @@ export function startWorkflowWebServer(options: WorkflowWebServerOptions): Workf
           parameters: w.parameters ?? null,
           savedAt: w.savedAt,
         })),
-        builtins: BUILTIN_WORKFLOWS.map((b) => ({ name: b.name, description: b.description })),
+        builtins: BUILTIN_WORKFLOWS.map((b) => ({
+          name: b.name,
+          description: b.description,
+          script: b.previewScript,
+        })),
       });
     }
 
@@ -428,22 +432,53 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-/** JSON with cycle tolerance and a hard size cap on any single string value. */
+/**
+ * JSON with cycle tolerance and a hard size cap on any single string value.
+ * Cycle detection tracks only the CURRENT ancestor path (the same rule
+ * JSON.stringify's own stack uses), NOT every object ever visited — the same
+ * agent result reference legitimately appears in multiple places (a script
+ * returning an agent's structured output verbatim shows up both in
+ * snapshot.result and in the agent's own record), and a permanent seen-set
+ * would mislabel those shared references as "[circular]" and corrupt the
+ * payload.
+ */
 function safeJson(value: unknown): string {
-  const seen = new WeakSet<object>();
-  return JSON.stringify(value, (_key, val) => {
-    if (typeof val === "string" && val.length > MAX_VALUE_CHARS) return `${val.slice(0, MAX_VALUE_CHARS)}…[truncated]`;
-    if (typeof val === "bigint") return val.toString();
-    if (typeof val === "function") return undefined;
-    if (val && typeof val === "object") {
-      if (seen.has(val as object)) return "[circular]";
-      seen.add(val as object);
-      if (val instanceof Map) return Object.fromEntries(val);
-      if (val instanceof Set) return [...val];
-      if (val instanceof Error) return { name: val.name, message: val.message };
-    }
-    return val;
-  });
+  // The walk already flattened maps/sets/errors and resolved cycles, so this
+  // JSON.stringify cannot throw on structure; only a hostile toJSON/getter
+  // could, and the previous implementation threw in exactly those cases too.
+  return JSON.stringify(serializeJson(value, new Set<object>()));
+}
+
+function serializeJson(value: unknown, ancestors: Set<object>): unknown {
+  if (typeof value === "string") {
+    return value.length > MAX_VALUE_CHARS ? `${value.slice(0, MAX_VALUE_CHARS)}…[truncated]` : value;
+  }
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "function") return undefined;
+  if (value === null || typeof value !== "object") return value;
+  // Match JSON.stringify: a value's toJSON (e.g. Date) replaces it before
+  // serialization. Applying it through the same ancestors set still catches
+  // a pathological toJSON that returns itself.
+  const toJson = "toJSON" in value ? value.toJSON : undefined;
+  if (typeof toJson === "function") return serializeJson(toJson.call(value), ancestors);
+  if (ancestors.has(value)) return "[circular]";
+  ancestors.add(value);
+  let result: unknown;
+  if (Array.isArray(value)) {
+    result = value.map((entry) => serializeJson(entry, ancestors));
+  } else if (value instanceof Map) {
+    result = Object.fromEntries([...value.entries()].map(([k, v]) => [k, serializeJson(v, ancestors)]));
+  } else if (value instanceof Set) {
+    result = [...value].map((entry) => serializeJson(entry, ancestors));
+  } else if (value instanceof Error) {
+    result = { name: value.name, message: value.message };
+  } else {
+    result = Object.fromEntries(
+      Object.keys(value).map((key) => [key, serializeJson((value as Record<string, unknown>)[key], ancestors)]),
+    );
+  }
+  ancestors.delete(value);
+  return result;
 }
 
 type RunSummary = ReturnType<typeof summarizeRun>;
