@@ -45,6 +45,34 @@ omp plugin link .
 清单通过 `omp.extensions` 暴露 `extensions/workflow.ts`，通过 `omp.skills` 附带 `workflow-authoring` 与
 `workflow-patterns` 两个 skill。
 
+### Windows
+
+安装命令与 macOS/Linux 完全一致（bun 原生支持 Windows；`git` 仅 `isolation: "worktree"` 需要）：
+
+```powershell
+# 首次安装 bun（如尚未安装）
+powershell -c "irm bun.sh/install.ps1 | iex"
+# 安装插件
+omp plugin install github:ExLei/omp-dynamic-workflows
+```
+
+所有状态路径都基于 `os.homedir()`（Windows 上为 `%USERPROFILE%`），无需手工迁移：
+
+| 文档里的路径 | Windows 实际位置 |
+|---|---|
+| `~/.omp/workflows/settings.json` | `%USERPROFILE%\.omp\workflows\settings.json` |
+| `~/.omp/workflows/model-tiers.json` | `%USERPROFILE%\.omp\workflows\model-tiers.json` |
+| `~/.omp/workflows/saved/` | `%USERPROFILE%\.omp\workflows\saved\` |
+
+Web 控制台在 Windows 上用默认浏览器打开（`rundll32 url.dll,FileProtocolHandler`，不走 shell，URL token 不会被 `&` 截断）；SSH 会话同样只打印 URL。环境变量写法为 PowerShell 语法：
+
+```powershell
+$env:OMP_WORKFLOW_WEB = "8787"   # 固定控制台端口
+$env:OMP_WORKFLOW_WEB_TOKEN = "…" # 跨重启复用 token
+```
+
+`git worktree` 隔离、运行持久化（tmp+rename 原子写、`wx` 租约锁）均为跨平台实现。
+
 ## 快速上手
 
 四种入口，从隐式到显式：
